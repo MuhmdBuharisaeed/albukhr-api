@@ -37,12 +37,14 @@ app.post("/stake",(req,res)=>{
 
 app.get("/stakes",(req,res)=>{
 
-  const uid = req.headers["x-user-id"];
+  const uid =
+    req.headers["x-user-id"] ||
+    req.query.uid;
 
   if(!uid) return res.json([]);
 
   res.json(
-    stakes.filter(s=>s.userId===uid)
+    stakes.filter(s=>s.userId === uid)
   );
 
 });
