@@ -38,8 +38,8 @@ app.post("/stake",(req,res)=>{
 app.get("/stakes",(req,res)=>{
 
   const uid =
-    req.headers["x-user-id"] ||
-    req.query.uid;
+  req.headers["x-user-id"] ||
+  req.query.uid;
 
   if(!uid) return res.json([]);
 
