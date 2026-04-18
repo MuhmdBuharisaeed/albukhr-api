@@ -8,9 +8,6 @@ app.use(express.json());
 
 let stakes = [];
 
-/* =========================
-   STAKE
-========================= */
 app.post("/stake",(req,res)=>{
 
   const {userId, project, amount, duration, txid} = req.body;
@@ -38,9 +35,6 @@ app.post("/stake",(req,res)=>{
 
 });
 
-/* =========================
-   GET STAKES
-========================= */
 app.get("/stakes",(req,res)=>{
 
   const uid = req.headers["x-user-id"];
@@ -53,27 +47,10 @@ app.get("/stakes",(req,res)=>{
 
 });
 
-/* =========================
-   WITHDRAW
-========================= */
 app.post("/withdraw",(req,res)=>{
-  res.json({success:true});
-});
-
-/* =========================
-   🔥 COMPLETE PAYMENT (IMPORTANT)
-========================= */
-app.post("/complete-payment",(req,res)=>{
-
-  const {paymentId, txid} = req.body;
-
-  console.log("✅ Payment completed:", paymentId, txid);
 
   res.json({success:true});
 
 });
 
-/* =========================
-   START SERVER
-========================= */
 app.listen(3000,()=>console.log("Running"));
