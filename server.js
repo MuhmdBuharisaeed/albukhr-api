@@ -1,7 +1,3 @@
-app.get("/", (req, res) => {
-  res.send("ALBUKHR API RUNNING 🚀");
-});
-
 const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
@@ -94,7 +90,9 @@ app.post("/complete-payment", async (req, res) => {
 
 });
 
-/* START */
-app.listen(10000, () => {
-  console.log("Server running on port 10000");
+/* START (FIXED) */
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log("Server running on port " + PORT);
 });
