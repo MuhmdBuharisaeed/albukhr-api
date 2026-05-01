@@ -1,108 +1,100 @@
+app.get("/", (req, res) => {
+  res.send("ALBUKHR API RUNNING 🚀");
+});
+
 const express = require("express");
+const axios = require("axios");
 const cors = require("cors");
+const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-let stakes = [];
+/* ENV */
+const PI_API_KEY = process.env.PI_API_KEY;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-app.post("/stake",(req,res)=>{
+/* SUPABASE */
+const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_SERVICE_KEY
+);
 
-  const {userId, project, amount, duration, txid} = req.body;
-
-  if(!userId || !txid){
-    return res.json({success:false});
-  }
-
-  const stake = {
-    id:"ST-"+Date.now(),
-    userId,
-    project,
-    amount,
-    duration,
-    reward: amount * 0.05,
-    withdrawnReward:0,
-    status:"Successful",
-    timestamp:Date.now(),
-    txid
-  };
-
-  stakes.push(stake);
-
-  res.json({success:true, stake});
-
+/* TEST ROUTE */
+app.get("/", (req, res) => {
+  res.send("ALBUKHR API RUNNING 🚀");
 });
 
-app.get("/stakes",(req,res)=>{
+/* ================= APPROVE ================= */
+app.post("/approve-payment", async (req, res) => {
 
-  const uid =
-  req.headers["x-user-id"] ||
-  req.query.uid;
+  const { paymentId } = req.body;
 
-  if(!uid) return res.json([]);
+  try {
 
-  res.json(
-    stakes.filter(s=>s.userId === uid)
-  );
-
-});
-
-app.post("/withdraw",(req,res)=>{
-
-  const {userId, project, amount} = req.body;
-
-  if(!userId || !project || !amount){
-    return res.json({success:false,error:"Invalid request"});
-  }
-
-  let remaining = Number(amount);
-
-  /* FILTER BY PROJECT */
-  const userStakes =
-    stakes.filter(s =>
-      s.userId === userId &&
-      s.project === project
+    await axios.post(
+      `https://api.minepi.com/v2/payments/${paymentId}/approve`,
+      {},
+      {
+        headers: {
+          Authorization: `Key ${PI_API_KEY}`
+        }
+      }
     );
 
-  if(userStakes.length === 0){
-    return res.json({
-      success:false,
-      error:"No stakes in this project"
-    });
+    res.send({ success: true });
+
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    res.status(500).send({ error: "Approve failed" });
   }
-
-  /* LOOP THROUGH PROJECT STAKES */
-  for(let s of userStakes){
-
-    const available =
-      (s.reward || 0) -
-      (s.withdrawnReward || 0);
-
-    if(available > 0 && remaining > 0){
-
-      const take =
-        Math.min(available, remaining);
-
-      s.withdrawnReward =
-        (s.withdrawnReward || 0) + take;
-
-      remaining -= take;
-
-    }
-
-  }
-
-  if(remaining > 0){
-    return res.json({
-      success:false,
-      error:"Insufficient project reward"
-    });
-  }
-
-  res.json({success:true});
 
 });
 
-app.listen(3000,()=>console.log("Running"));
+/* ================= COMPLETE ================= */
+app.post("/complete-payment", async (req, res) => {
+
+  const { paymentId, txid } = req.body;
+
+  try {
+
+    const result = await axios.post(
+      `https://api.minepi.com/v2/payments/${paymentId}/complete`,
+      { txid },
+      {
+        headers: {
+          Authorization: `Key ${PI_API_KEY}`
+        }
+      }
+    );
+
+    const payment = result.data;
+    const metadata = payment.metadata;
+
+    // 🔐 SAVE AFTER PAYMENT
+    await supabase.from("stakes").insert([{
+      user_id: metadata.user,
+      project: metadata.project,
+      amount: payment.amount,
+      duration: metadata.duration,
+      reward: 0,
+      withdrawnReward: 0,
+      created_at: new Date().toISOString()
+    }]);
+
+    res.send({ success: true });
+
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    res.status(500).send({ error: "Complete failed" });
+  }
+
+});
+
+/* START */
+app.listen(10000, () => {
+  console.log("Server running on port 10000");
+});
