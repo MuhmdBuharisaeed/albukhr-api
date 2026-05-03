@@ -14,10 +14,16 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 /* SUPABASE */
-const supabase = createClient(
-  SUPABASE_URL,
-  SUPABASE_SERVICE_KEY
-);
+let supabase = null;
+
+if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
+  supabase = createClient(
+    SUPABASE_URL,
+    SUPABASE_SERVICE_KEY
+  );
+} else {
+  console.warn("⚠️ Supabase ENV not set");
+}
 
 /* ================= HEALTH ================= */
 app.get("/", (req, res) => {
