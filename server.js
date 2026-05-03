@@ -94,34 +94,29 @@ app.post("/complete-payment", async (req, res) => {
     console.log("🎉 COMPLETED:", paymentId);
 
     // 🔐 SAVE TO SUPABASE
-    const { error } = await supabase
-      .from("stakes")
-      .insert([{
-        user_id: metadata.user,
-        project: metadata.project,
-        amount: payment.amount,
-        duration: metadata.duration,
-        reward: 0,
-        withdrawnReward: 0,
-        created_at: new Date().toISOString()
-      }]);
+    if (supabase) {
 
-    if (error) {
-      console.error("❌ SUPABASE:", error);
-    }
+  const { error } = await supabase
+    .from("stakes")
+    .insert([{
+      user_id: metadata.user,
+      project: metadata.project,
+      amount: payment.amount,
+      duration: metadata.duration,
+      reward: 0,
+      withdrawnReward: 0,
+      created_at: new Date().toISOString()
+    }]);
 
-    res.send({ success: true });
-
-  } catch (err) {
-
-    console.error("❌ COMPLETE ERROR:",
-      err.response?.data || err.message
-    );
-
-    res.status(500).send({ error: "Complete failed" });
+  if (error) {
+    console.error("❌ SUPABASE:", error);
   }
 
-});
+} else {
+
+  console.warn("⚠️ Supabase not initialized");
+
+    }
 
 /* ================= START ================= */
 const PORT = process.env.PORT || 3000;
