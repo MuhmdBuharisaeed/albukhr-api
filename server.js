@@ -73,70 +73,36 @@ app.post("/approve-payment", async (req, res) => {
 });
 
 /* ================= COMPLETE ================= */
-app.post("/complete-payment", async (req, res) => {
+app.post("/approve-payment", async (req, res) => {
 
-  const { paymentId, txid } = req.body;
-
-  if (!paymentId || !txid) {
-    return res.status(400).send({ error: "Missing data" });
-  }
+  const { paymentId } = req.body;
 
   try {
 
     const result = await axios.post(
-      `https://api.testnet.minepi.com/v2/payments/${paymentId}/complete`,
-      { txid },
+      `https://api.testnet.minepi.com/v2/payments/${paymentId}/approve`,
+      {},
       {
         headers: {
-          Authorization: `Key ${PI_API_KEY}`
-        },
-        timeout: 10000
+          Authorization: `Key ${process.env.PI_API_KEY}`
+        }
       }
     );
 
-    const payment = result.data;
-    const metadata = payment.metadata;
-
-    console.log("🎉 COMPLETED:", paymentId);
-
-    // 🔐 SAVE TO SUPABASE
-    if (supabase) {
-
-      const { error } = await supabase
-        .from("stakes")
-        .insert([{
-          user_id: metadata.user,
-          project: metadata.project,
-          amount: payment.amount,
-          duration: metadata.duration,
-          reward: 0,
-          withdrawnReward: 0,
-          created_at: new Date().toISOString()
-        }]);
-
-      if (error) {
-        console.error("❌ SUPABASE:", error);
-      }
-
-    } else {
-
-      console.warn("⚠️ Supabase not initialized");
-
-    }
+    console.log("✅ APPROVED:", paymentId);
 
     res.send({ success: true });
 
   } catch (err) {
 
-    console.error("❌ COMPLETE ERROR:",
+    console.error("❌ APPROVE ERROR:",
       err.response?.data || err.message
     );
 
-    res.status(500).send({ error: "Complete failed" });
+    res.status(500).send({ error: "Approve failed" });
   }
 
 });
-
 /* ================= START ================= */
 const PORT = process.env.PORT || 3000;
 
