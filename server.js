@@ -46,8 +46,10 @@ app.post("/approve-payment", async (req, res) => {
 
   try {
 
+    console.log("PAYMENT ID:", paymentId);
+    
     const result = await axios.post(
-      `https://api.testnet.minepi.com/v2/payments/${paymentId}/approve`,
+  `https://api.minepi.com/v2/payments/${paymentId}/approve`,
       {},
       {
         headers: {
@@ -85,7 +87,7 @@ app.post("/complete-payment", async (req, res) => {
     console.log("PAYMENT ID:", paymentId);
     
     const result = await axios.post(
-      `https://api.testnet.minepi.com/v2/payments/${paymentId}/complete`,
+  `https://api.minepi.com/v2/payments/${paymentId}/complete`,
       { txid },
       {
         headers: {
