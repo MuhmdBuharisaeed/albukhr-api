@@ -36,6 +36,9 @@ app.get("/ping", (req, res) => {
 });
 
 /* ================= APPROVE ================= */
+
+console.log("PI KEY:", PI_API_KEY);
+
 app.post("/approve-payment", async (req, res) => {
 
   const { paymentId } = req.body;
