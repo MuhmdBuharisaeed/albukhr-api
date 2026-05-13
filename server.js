@@ -1,11 +1,17 @@
 const express = require("express");
-const axios = require("axios");
 const cors = require("cors");
+const Pi = require("pi-backend");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+Pi.init({
+  apiKey: process.env.PI_API_KEY,
+  walletPrivateSeed: process.env.WALLET_PRIVATE_SEED,
+  sandbox: true
+});
 
 /* ===============================
    ENV
@@ -37,44 +43,29 @@ app.get("/ping", (req, res) => {
    APPROVE PAYMENT
 =============================== */
 
-app.post("/approve-payment", async (req, res) => {
+app.post("/approve-payment", async (req,res)=>{
 
-  try {
+  try{
 
     const { paymentId } = req.body;
 
-    console.log("APPROVE PAYMENT:", paymentId);
+    console.log("APPROVING:", paymentId);
 
-    const result = await axios.post(
-
-      `https://api.testnet.minepi.com/v2/payments/${paymentId}/approve`,
-
-      {},
-
-      {
-        headers: {
-          Authorization: `Key ${PI_API_KEY}`
-        }
-      }
-
-    );
+    await Pi.approvePayment(paymentId);
 
     console.log("APPROVED SUCCESS");
 
     res.send({
-      success: true
+      success:true
     });
 
-  } catch (err) {
+  }catch(err){
 
-    console.error(
-      "APPROVE ERROR:",
-      err.response?.data || err.message
-    );
+    console.error(err);
 
     res.status(500).send({
-      success: false,
-      error: "Approve failed"
+      success:false,
+      error:err.message
     });
 
   }
@@ -85,50 +76,29 @@ app.post("/approve-payment", async (req, res) => {
    COMPLETE PAYMENT
 =============================== */
 
-app.post("/complete-payment", async (req, res) => {
+app.post("/complete-payment", async (req,res)=>{
 
-  try {
+  try{
 
     const { paymentId, txid } = req.body;
 
-    console.log(
-      "COMPLETE PAYMENT:",
-      paymentId,
-      txid
-    );
+    console.log("COMPLETING:", paymentId);
 
-    const result = await axios.post(
-
-      `https://api.testnet.minepi.com/v2/payments/${paymentId}/complete`,
-
-      {
-        txid
-      },
-
-      {
-        headers: {
-          Authorization: `Key ${PI_API_KEY}`
-        }
-      }
-
-    );
+    await Pi.completePayment(paymentId, txid);
 
     console.log("COMPLETE SUCCESS");
 
     res.send({
-      success: true
+       successtrue
     });
 
-  } catch (err) {
+  }catch(err){
 
-    console.error(
-      "COMPLETE ERROR:",
-      err.response?.data || err.message
-    );
+    console.error(err);
 
     res.status(500).send({
-      success: false,
-      error: "Complete failed"
+      success:false,
+      error:err.message
     });
 
   }
