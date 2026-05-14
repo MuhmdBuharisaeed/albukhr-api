@@ -90,7 +90,7 @@ app.post("/complete-payment", async (req,res)=>{
     console.log("COMPLETE SUCCESS");
 
     res.send({
-       successtrue
+      success:true
     });
 
   }catch(err){
