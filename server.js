@@ -113,10 +113,10 @@ const PORT = process.env.PORT || 3000;
 
 app.get("/check-key", (req, res) => {
 
-res.send({
-hasKey: !!PI_API_KEY,
-preview: PI_API_KEY
-? PI_API_KEY.slice(0,10) + "..."
+res.json({
+hasKey: !!process.env.PI_API_KEY,
+preview: process.env.PI_API_KEY
+? process.env.PI_API_KEY.slice(0,10) + "..."
 : "NO KEY"
 });
 
