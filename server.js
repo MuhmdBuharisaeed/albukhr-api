@@ -1,5 +1,6 @@
-const express = require("express");
 console.log("🔥 NEW SERVER FILE LOADED");
+
+const express = require("express");
 const cors = require("cors");
 const Pi = require("pi-backend");
 
