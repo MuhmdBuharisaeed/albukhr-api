@@ -58,8 +58,8 @@ app.post("/approve-payment", async (req,res)=>{
     console.log("APPROVED SUCCESS");
 
     res.send({
-      success:true
-    });
+   success:true
+});
 
   }catch(err){
 
@@ -91,8 +91,8 @@ app.post("/complete-payment", async (req,res)=>{
     console.log("COMPLETE SUCCESS");
 
     res.send({
-      success:true
-    });
+   success:true
+});
 
   }catch(err){
 
