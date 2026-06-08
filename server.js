@@ -1,134 +1,119 @@
-console.log("🔥 NEW SERVER FILE LOADED");
-
 const express = require("express");
 const cors = require("cors");
-const Pi = require("pi-backend");
+const axios = require("axios");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-Pi.init({
-  apiKey: process.env.PI_API_KEY,
-  walletPrivateSeed: process.env.WALLET_PRIVATE_SEED,
-  sandbox: true
-});
-
-/* ===============================
-   ENV
-=============================== */
-
-const PI_API_KEY = process.env.PI_API_KEY;
-
-/* ===============================
-   HEALTH CHECK
-=============================== */
-
 app.get("/", (req, res) => {
-
-  res.send("ALBUKHR PAYMENT API RUNNING 🚀");
-
+  res.status(200).json({
+    status: "OK"
+  });
 });
 
-/* ===============================
-   PING
-=============================== */
-
-app.get("/ping", (req, res) => {
-
-  res.send("alive");
-
-});
-
-/* ===============================
+/* ===================================
    APPROVE PAYMENT
-=============================== */
+=================================== */
+app.post("/approve", async (req, res) => {
 
-app.post("/approve-payment", async (req,res)=>{
+  try {
 
-  try{
+    const paymentId = req.body.paymentId;
 
-    const { paymentId } = req.body;
+    console.log("APPROVING PAYMENT:", paymentId);
 
-    console.log("APPROVING:", paymentId);
+    console.log(
+      "PI API KEY EXISTS:",
+      !!process.env.PI_API_KEY
+    );
 
-    await Pi.approvePayment(paymentId);
+    const response = await axios.post(
+      `https://api.minepi.com/v2/payments/${paymentId}/approve`,
+      {},
+      {
+        headers: {
+          Authorization: `Key ${process.env.PI_API_KEY}`
+        }
+      }
+    );
 
     console.log("APPROVED SUCCESS");
 
-    res.send({
-   success:true
-});
+    res.json({
+      success: true,
+      data: response.data
+    });
 
-  }catch(err){
+  } catch (error) {
 
-    console.error(err);
+    console.log(
+      "APPROVE ERROR:",
+      error.response?.data || error.message
+    );
 
-    res.status(500).send({
-      success:false,
-      error:err.message
+    res.status(500).json({
+      success: false,
+      error:
+        error.response?.data ||
+        error.message
     });
 
   }
 
 });
 
-/* ===============================
+/* ===================================
    COMPLETE PAYMENT
-=============================== */
+=================================== */
+app.post("/complete", async (req, res) => {
 
-app.post("/complete-payment", async (req,res)=>{
-
-  try{
+  try {
 
     const { paymentId, txid } = req.body;
 
-    console.log("COMPLETING:", paymentId);
+    console.log("COMPLETING PAYMENT:", paymentId);
 
-    await Pi.completePayment(paymentId, txid);
+    const response = await axios.post(
+      `https://api.minepi.com/v2/payments/${paymentId}/complete`,
+      { txid },
+      {
+        headers: {
+          Authorization: `Key ${process.env.PI_API_KEY}`
+        }
+      }
+    );
 
-    console.log("COMPLETE SUCCESS");
+    console.log("COMPLETED SUCCESS");
 
-    res.send({
-   success:true
-});
+    res.json({
+      success: true,
+      data: response.data
+    });
 
-  }catch(err){
+  } catch (error) {
 
-    console.error(err);
+    console.log(
+      "COMPLETE ERROR:",
+      error.response?.data || error.message
+    );
 
-    res.status(500).send({
-      success:false,
-      error:err.message
+    res.status(500).json({
+      success: false,
+      error:
+        error.response?.data ||
+        error.message
     });
 
   }
 
 });
 
-/* ===============================
-   START SERVER
-=============================== */
-
-const PORT = process.env.PORT || 3000;
-
-app.get("/check-key", (req, res) => {
-
-res.json({
-hasKey: !!process.env.PI_API_KEY,
-preview: process.env.PI_API_KEY
-? process.env.PI_API_KEY.slice(0,10) + "..."
-: "NO KEY"
-});
-
-});
+const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
-
   console.log(
-    "ALBUKHR PAYMENT SERVER RUNNING ON PORT",
-    PORT
+    `ALBUKHR PAYMENT SERVER RUNNING ON PORT ${PORT}`
   );
-
 });
