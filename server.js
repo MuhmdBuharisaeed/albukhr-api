@@ -185,7 +185,7 @@ app.post("/withdraw", async (req, res) => {
 
 });
 
-app.get("/test-supabase", async (req,res)=>{
+app.get("/supabase-status", async (req,res)=>{
 
   try{
 
@@ -216,7 +216,7 @@ app.get("/test-supabase", async (req,res)=>{
 
 });
 
-app.get("/test-stellar", async (req,res)=>{
+app.get("/mainnet-status", async (req,res)=>{
 
   try{
 
@@ -241,7 +241,7 @@ app.get("/test-stellar", async (req,res)=>{
 
 });
 
-app.get("/test-wallet", (req, res) => {
+app.get("/wallet-status", (req,res)=>{
 
   try {
 
