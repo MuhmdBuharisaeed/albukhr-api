@@ -70,21 +70,29 @@ app.post("/approve", async (req, res) => {
       data: response.data
     });
 
-  } catch (error) {
+  catch (error) {
 
-    console.log(
-      "APPROVE ERROR:",
-      error.response?.data || error.message
-    );
+  if (error.response?.data?.error === "already_approved") {
 
-    res.status(500).json({
-      success: false,
-      error:
-        error.response?.data ||
-        error.message
+    console.log("Payment already approved.");
+
+    return res.json({
+      success: true
     });
 
   }
+
+  console.log(
+    "APPROVE ERROR:",
+    error.response?.data || error.message
+  );
+
+  return res.status(500).json({
+    success:false,
+    error:error.response?.data || error.message
+  });
+
+      }
 
 });
 
