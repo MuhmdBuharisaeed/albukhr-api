@@ -150,11 +150,12 @@ app.post("/withdraw", async (req, res) => {
     }
 
     const { data, error } =
-      await supabase
-        .from("withdraw_requests")
-        .select("*")
-        .eq("id", requestId)
-        .single();
+  await supabase
+    .from("withdraw_requests")
+    .select("*")
+    .eq("id", requestId)
+    .eq("network", "mainnet")
+    .single();
 
     if(error || !data){
       return res.status(404).json({
@@ -284,10 +285,11 @@ app.post("/pay-withdraw", async (req, res) => {
 
     /* Load Withdraw Request */
     const { data, error } = await supabase
-      .from("withdraw_requests")
-      .select("*")
-      .eq("id", requestId)
-      .single();
+  .from("withdraw_requests")
+  .select("*")
+  .eq("id", requestId)
+  .eq("network", "mainnet")
+  .single();
 
     if (error || !data) {
       return res.status(404).json({
@@ -368,16 +370,17 @@ const transaction =
 
     /* Update Transactions Table */
     await supabase
-      .from("transactions")
-      .update({
-        status: "paid",
-        txid: txHash,
-        processed_at:
-          new Date().toISOString()
-      })
-      .eq("userid", data.userid)
-      .eq("wallet", data.wallet)
-      .eq("status", "approved");
+  .from("transactions")
+  .update({
+    status: "paid",
+    txid: txHash,
+    processed_at:
+      new Date().toISOString()
+  })
+  .eq("userid", data.userid)
+  .eq("wallet", data.wallet)
+  .eq("status", "approved")
+  .eq("network", "mainnet");
 
     return res.json({
       success: true,
