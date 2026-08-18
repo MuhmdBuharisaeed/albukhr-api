@@ -419,6 +419,11 @@ const transaction =
 
 });
 
+const piProjectTreasuryRoutes =
+  require("./pi-project-treasury-payment-routes");
+
+app.use(piProjectTreasuryRoutes);
+
 const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
