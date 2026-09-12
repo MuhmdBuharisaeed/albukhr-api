@@ -1,12 +1,12 @@
 {
   "name": "albukhr-api",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "description": "ALBUKHR Mainnet API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check src/mainnet-api.js && node --check src/pi-client.js && node --check src/supabase-client.js"
+    "check": "node --check server.js && node --check src/mainnet-api.js && node --check src/financial-gateway.js && node --check src/pi-client.js && node --check src/supabase-client.js"
   },
   "engines": {
     "node": ">=20.0.0 <25.0.0"
