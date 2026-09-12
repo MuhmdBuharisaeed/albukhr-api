@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: albukhr-api
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeployTrigger: commit
