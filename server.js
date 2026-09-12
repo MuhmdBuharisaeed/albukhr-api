@@ -103,6 +103,18 @@ app.use(
 );
 
 /* -------------------------------------------------------
+ * EXTERNAL PROJECT TRUSTED GATEWAY
+ *
+ * Mainnet External Project operations must pass through
+ * Pi-token verification before reaching Supabase.
+ * ----------------------------------------------------- */
+
+app.use(
+  "/api/external-project",
+  externalProjectGatewayRouter
+);
+
+/* -------------------------------------------------------
  * GLOBAL RATE LIMIT
  * ----------------------------------------------------- */
 
