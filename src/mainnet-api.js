@@ -134,44 +134,58 @@ async function tableExists(name) {
     });
 
   if (!error) {
-    return true;
+    return {
+      exists: true,
+      code: null,
+    };
   }
 
   if (isMissingTableError(error)) {
-    return false;
+    return {
+      exists: false,
+      code: "TABLE_NOT_FOUND",
+    };
   }
 
-  /*
-   * Do NOT hide unexpected database errors.
-   * They indicate a real infrastructure/configuration problem.
-   */
-  throw error;
-}
+  console.error(
+    `[ALBUKHR API] Table check failed: ${name}`,
+    {
+      code: error.code || null,
+      status: error.status || null,
+      message: error.message || null,
+    }
+  );
 
-/*
- * Check the Mainnet database.
- */
+  return {
+    exists: false,
+    code: String(error.code || "DATABASE_QUERY_FAILED"),
+  };
+}
 async function databaseStatus() {
   const core = {};
   const financial = {};
+  const errors = [];
 
-  /*
-   * Core ALBUKHR tables.
-   */
   for (const table of [
     "projects",
     "users",
     "login_events",
   ]) {
-    core[table] = await tableExists(table);
+    const result = await tableExists(table);
+
+    core[table] = result.exists;
+
+    if (
+      !result.exists &&
+      result.code !== "TABLE_NOT_FOUND"
+    ) {
+      errors.push({
+        table,
+        code: result.code,
+      });
+    }
   }
 
-  /*
-   * Financial tables.
-   *
-   * Missing financial tables are valid at the current
-   * architecture stage and will simply be reported false.
-   */
   for (const table of [
     "stakes",
     "transactions",
@@ -179,15 +193,28 @@ async function databaseStatus() {
     "project_treasury",
     "project_treasury_transactions",
   ]) {
-    financial[table] = await tableExists(table);
+    const result = await tableExists(table);
+
+    financial[table] = result.exists;
+
+    if (
+      !result.exists &&
+      result.code !== "TABLE_NOT_FOUND"
+    ) {
+      errors.push({
+        table,
+        code: result.code,
+      });
+    }
   }
 
   const coreReady = Object.values(core).every(Boolean);
-
   const financialReady = Object.values(financial).every(Boolean);
 
   return {
-    status: coreReady ? "ok" : "degraded",
+    status: errors.length === 0 && coreReady
+      ? "ok"
+      : "degraded",
 
     network: "mainnet",
 
@@ -199,17 +226,13 @@ async function databaseStatus() {
 
     financial_settlement_ready: financialReady,
 
-    /*
-     * The RPC is not deployed in the current Mainnet DB.
-     * Keep this explicit instead of pretending settlement exists.
-     */
     settlement_rpc_present: false,
+
+    diagnostics: {
+      database_query_errors: errors,
+    },
   };
 }
-
-/*
- * Public health status.
- */
 async function health() {
   const database = await databaseStatus();
 
