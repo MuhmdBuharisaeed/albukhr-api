@@ -103,18 +103,6 @@ app.use(
 );
 
 /* -------------------------------------------------------
- * EXTERNAL PROJECT TRUSTED GATEWAY
- *
- * Mainnet External Project operations must pass through
- * Pi-token verification before reaching Supabase.
- * ----------------------------------------------------- */
-
-app.use(
-  "/api/external-project",
-  externalProjectGatewayRouter
-);
-
-/* -------------------------------------------------------
  * GLOBAL RATE LIMIT
  * ----------------------------------------------------- */
 
@@ -391,7 +379,3 @@ function shutdown(signal) {
 
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
-
-const {
-  externalProjectGatewayRouter
-} = require("./src/external-project-gateway");
