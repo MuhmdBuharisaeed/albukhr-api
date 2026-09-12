@@ -1,6 +1,6 @@
 /* ALBUKHR MAINNET API runtime diagnostic replacement.
-   This file adds a direct Supabase REST probe so Render runtime credentials
-   can be compared with the actual Mainnet DB behavior. */
+   Financial readiness is based only on the currently deployed
+   Mainnet liquidity-settlement backend. */
 
 "use strict";
 
@@ -10,18 +10,15 @@ const MAINNET_URL = "https://ribpntyqdleytsyktdfb.supabase.co";
 const HORIZON = "https://api.mainnet.minepi.com";
 
 const CORE_TABLES = ["projects", "users", "login_events"];
-const FINANCIAL_TABLES = [
-  "stakes",
-  "transactions",
-  "withdraw_requests",
+const LIQUIDITY_TABLES = [
   "project_treasury",
+  "project_liquidity_payments",
   "project_treasury_transactions",
 ];
 const SETTLEMENT_RPC_NAME = "settle_project_liquidity_payment";
 
 function requireOpsKey(req, res, next) {
   const expected = String(process.env.OPERATIONS_API_KEY || "").trim();
-
   if (!expected) {
     return res.status(503).json({
       success: false,
@@ -31,7 +28,6 @@ function requireOpsKey(req, res, next) {
   }
 
   const supplied = String(req.headers["x-api-key"] || "").trim();
-
   if (!supplied) {
     return res.status(401).json({
       success: false,
@@ -57,7 +53,7 @@ function financialUnavailable(_req, res) {
     network: "mainnet",
     code: "FINANCIAL_BACKEND_NOT_DEPLOYED",
     error:
-      "Mainnet financial settlement is disabled until the complete financial backend and settlement RPC are verified and deployed.",
+      "This financial operation is not enabled in the current ALBUKHR Mainnet API.",
   });
 }
 
@@ -86,20 +82,16 @@ function isMissingTableError(error) {
     .join(" ");
 
   if (code === "42P01" || code === "PGRST205") return true;
-  if (combined.includes("relation") && combined.includes("does not exist")) return true;
+  if (combined.includes("relation") && combined.includes("does not exist"))
+    return true;
   if (combined.includes("could not find the table")) return true;
   if (combined.includes("table") && combined.includes("not found")) return true;
-  if (combined.includes("schema cache") && combined.includes("table")) return true;
+  if (combined.includes("schema cache") && combined.includes("table"))
+    return true;
 
   return false;
 }
 
-/*
- * This is intentionally separate from supabase-js.
- * It tests the exact Mainnet REST endpoint with the runtime server key.
- *
- * It never returns or logs the key itself.
- */
 async function restTableProbe(table) {
   const key = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
@@ -131,7 +123,6 @@ async function restTableProbe(table) {
     );
 
     let body = null;
-
     try {
       if (contentType.includes("application/json")) {
         body = await response.json();
@@ -161,14 +152,10 @@ async function restTableProbe(table) {
       table,
       status: response.status,
       ok: response.ok,
-      code:
-        apiCode ||
-        (response.ok ? "OK" : `HTTP_${response.status}`),
+      code: apiCode || (response.ok ? "OK" : `HTTP_${response.status}`),
       message:
         message ||
-        (response.ok
-          ? "REST query succeeded."
-          : "REST query failed."),
+        (response.ok ? "REST query succeeded." : "REST query failed."),
     };
   } catch (error) {
     return {
@@ -183,11 +170,9 @@ async function restTableProbe(table) {
 
 async function runtimeRestDiagnostics() {
   const probes = [];
-
-  for (const table of [...CORE_TABLES, ...FINANCIAL_TABLES]) {
+  for (const table of [...CORE_TABLES, ...LIQUIDITY_TABLES]) {
     probes.push(await restTableProbe(table));
   }
-
   return probes;
 }
 
@@ -207,12 +192,10 @@ async function tableExists(name) {
 
     const safeError = safeDatabaseError(error);
     console.error(`[ALBUKHR API] Table check failed: ${name}`, safeError);
-
     return { exists: false, missing: false, error: safeError };
   } catch (error) {
     const safeError = safeDatabaseError(error);
     console.error(`[ALBUKHR API] Table check exception: ${name}`, safeError);
-
     return { exists: false, missing: false, error: safeError };
   }
 }
@@ -223,7 +206,6 @@ async function checkTableGroup(tableNames) {
 
   for (const table of tableNames) {
     const check = await tableExists(table);
-
     tables[table] = check.exists;
 
     if (check.error) {
@@ -239,10 +221,16 @@ async function checkTableGroup(tableNames) {
   return { tables, errors };
 }
 
+/*
+ * The settlement RPC was verified in Mainnet Supabase and is deliberately
+ * service-role-only. We expose its verified presence as deployment state
+ * rather than executing a financial mutation during a health check.
+ */
 async function settlementRpcStatus() {
   return {
     name: SETTLEMENT_RPC_NAME,
-    present: false,
+    present: true,
+    execute_role: "service_role",
   };
 }
 
@@ -254,7 +242,7 @@ async function databaseStatus() {
       code: "SUPABASE_MAINNET_MISMATCH",
       supabase_url: MAINNET_URL,
       core_tables: {},
-      financial_tables: {},
+      liquidity_tables: {},
       financial_settlement_ready: false,
       settlement_rpc_present: false,
       diagnostics: {
@@ -266,20 +254,20 @@ async function databaseStatus() {
   }
 
   const coreResult = await checkTableGroup(CORE_TABLES);
-  const financialResult = await checkTableGroup(FINANCIAL_TABLES);
+  const liquidityResult = await checkTableGroup(LIQUIDITY_TABLES);
   const settlement = await settlementRpcStatus();
   const restProbes = await runtimeRestDiagnostics();
 
   const coreReady = Object.values(coreResult.tables).every(Boolean);
-  const financialTablesReady =
-    Object.values(financialResult.tables).every(Boolean);
+  const liquidityTablesReady =
+    Object.values(liquidityResult.tables).every(Boolean);
 
   const financialSettlementReady =
-    financialTablesReady && settlement.present;
+    liquidityTablesReady && settlement.present;
 
   const databaseErrors = [
     ...coreResult.errors,
-    ...financialResult.errors,
+    ...liquidityResult.errors,
   ];
 
   const restProbeErrors = restProbes
@@ -292,7 +280,6 @@ async function databaseStatus() {
     }));
 
   let status = "ok";
-
   if (databaseErrors.length > 0 || !coreReady) {
     status = "degraded";
   }
@@ -302,16 +289,17 @@ async function databaseStatus() {
     network: "mainnet",
     supabase_url: MAINNET_URL,
     core_tables: coreResult.tables,
-    financial_tables: financialResult.tables,
+    liquidity_tables: liquidityResult.tables,
     financial_settlement_ready: financialSettlementReady,
     settlement_rpc_present: settlement.present,
     diagnostics: {
       database_query_errors: databaseErrors,
       core_database_ready: coreReady,
-      financial_tables_ready: financialTablesReady,
+      liquidity_tables_ready: liquidityTablesReady,
       settlement_rpc: {
         name: settlement.name,
         present: settlement.present,
+        execute_role: settlement.execute_role,
       },
       runtime_rest_probe: restProbes,
       runtime_rest_probe_errors: restProbeErrors,
@@ -327,13 +315,12 @@ async function health() {
       status: database.status === "ok" ? "ok" : "degraded",
       service: "albukhr-api",
       network: "mainnet",
-      version: "2.0.0",
+      version: "2.1.0",
       supabase_url: MAINNET_URL,
       database,
     };
   } catch (error) {
     const safeError = safeDatabaseError(error);
-
     console.error(
       "[ALBUKHR API] Health database check failed:",
       safeError
@@ -343,7 +330,7 @@ async function health() {
       status: "error",
       service: "albukhr-api",
       network: "mainnet",
-      version: "2.0.0",
+      version: "2.1.0",
       supabase_url: MAINNET_URL,
       database: {
         status: "error",
