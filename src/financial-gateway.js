@@ -12,6 +12,8 @@ const {
 
 const router = express.Router();
 const MAINNET = "mainnet";
+const WITHDRAWAL_FEE_RATE = 0.01;
+const MIN_WITHDRAWAL_PI = 1;
 
 function httpError(status,message){const e=new Error(message);e.status=status;return e;}
 function requireBearer(req){
@@ -63,7 +65,6 @@ async function getTreasury(projectId){
 function paymentRecipient(payment){return String(payment?.to_address||payment?.recipient_address||payment?.recipient?.address||payment?.transaction?.to_address||"").trim();}
 function paymentSenderUid(payment){return String(payment?.from_uid||payment?.sender_uid||payment?.sender?.uid||"").trim();}
 function paymentStatus(payment){return String(payment?.status||payment?.transaction?.status||"").trim().toLowerCase();}
-
 function assertSender(payment,piUid){const sender=paymentSenderUid(payment);if(sender&&sender!==piUid)throw httpError(403,"Pi payment sender does not match the authenticated Pi account.");}
 
 async function verifyPaymentForProject(payment,{project,treasury,piUid,amount,durationDays}){
@@ -110,7 +111,6 @@ router.post("/api/pi-payment-complete",async(req,res)=>{
     const treasury=await getTreasury(project.id);
     const before=await getPayment(paymentId);
     await verifyPaymentForProject(before,{project,treasury,piUid:identity.pi_uid,amount,durationDays});
-
     const completion=await completePayment(paymentId,txid);
     const after=await getPayment(paymentId);
     const finalStatus=paymentStatus(after);
@@ -119,24 +119,13 @@ router.post("/api/pi-payment-complete",async(req,res)=>{
     verifyPaymentMetadata(after,{amount,network:MAINNET,project_code:project.project_code,duration:durationDays});
     const recipient=paymentRecipient(after);
     if(!recipient||recipient!==treasury.treasury_wallet)throw httpError(403,"Completed Pi payment recipient does not match the project treasury wallet.");
-
     const transactionId=String(after?.transaction?.txid||after?.transaction?.id||txid).trim();
     const {data,error}=await supabase.rpc("create_stake_from_completed_payment",{
-      p_project_id:project.id,
-      p_payment_id:paymentId,
-      p_payer_pi_uid:identity.pi_uid,
-      p_amount:amount,
-      p_recipient_wallet:recipient,
-      p_pi_status:finalStatus,
-      p_verification_reference:transactionId,
-      p_request_id:null,
-      p_duration_days:durationDays,
-      p_metadata:{source:"albukhr-api",project_code:projectCode,duration_days:durationDays,transaction_id:transactionId}
+      p_project_id:project.id,p_payment_id:paymentId,p_payer_pi_uid:identity.pi_uid,p_amount:amount,
+      p_recipient_wallet:recipient,p_pi_status:finalStatus,p_verification_reference:transactionId,p_request_id:null,
+      p_duration_days:durationDays,p_metadata:{source:"albukhr-api",project_code:projectCode,duration_days:durationDays,transaction_id:transactionId}
     });
-    if(error){
-      console.error("[ALBUKHR API] Stake settlement RPC failed",{code:error.code,message:error.message});
-      throw httpError(502,"ALBUKHR stake settlement failed.");
-    }
+    if(error){console.error("[ALBUKHR API] Stake settlement RPC failed",{code:error.code,message:error.message});throw httpError(502,"ALBUKHR stake settlement failed.");}
     return res.status(200).json({success:true,data:{completion,stake:data}});
   }catch(error){
     const status=Number(error?.status)||500;
@@ -158,6 +147,28 @@ router.get("/api/my-stakes",async(req,res)=>{
   }catch(error){
     const status=Number(error?.status)||500;
     return res.status(status).json({success:false,error:status>=500?"Unable to load stakes.":error.message});
+  }
+});
+
+router.post("/api/withdrawal-request",async(req,res)=>{
+  try{
+    const identity=await verifiedPiIdentity(req);
+    const b=body(req);
+    const stakeId=clean(b.stake_id,"stake_id",100);
+    const withdrawalType=clean(b.withdrawal_type,"withdrawal_type",20).toLowerCase();
+    if(!["reward","capital"].includes(withdrawalType))throw httpError(400,"withdrawal_type is invalid.");
+    const requestedAmount=positiveAmount(b.requested_amount);
+    if(requestedAmount<MIN_WITHDRAWAL_PI)throw httpError(400,"Minimum withdrawal is 1 Pi.");
+    const feePreview=Number((requestedAmount*WITHDRAWAL_FEE_RATE).toFixed(3));
+    const {data,error}=await supabase.rpc("create_my_withdrawal_request",{
+      p_pi_uid:identity.pi_uid,p_network:MAINNET,p_stake_id:stakeId,p_withdrawal_type:withdrawalType,p_requested_amount:requestedAmount
+    });
+    if(error){console.error("[ALBUKHR API] Withdrawal request RPC failed",{code:error.code,message:error.message});throw httpError(400,error.message||"Withdrawal request could not be created.");}
+    return res.status(201).json({success:true,data,fee_preview:{fee_rate:WITHDRAWAL_FEE_RATE,fee_amount:feePreview,total_deduction:Number((requestedAmount+feePreview).toFixed(3)),wallet_receive:requestedAmount}});
+  }catch(error){
+    const status=Number(error?.status)||500;
+    if(status>=500)console.error("[ALBUKHR API] Withdrawal request error",error);
+    return res.status(status).json({success:false,error:status>=500?"Withdrawal request failed.":error.message});
   }
 });
 
