@@ -145,6 +145,56 @@ router.post("/api/pi-payment-complete",async(req,res)=>{
   }
 });
 
+
+router.get("/api/project-treasury",async(req,res)=>{
+  try{
+    const identity=await verifiedPiIdentity(req);
+    void identity;
+    const projectCode=clean(req.query.project_code,"project_code",100);
+    const project=await getProject(projectCode,{requireActive:false});
+    const {data,error}=await supabase.from("project_treasury")
+      .select("id,project_id,network,treasury_wallet,required_liquidity,verified_liquidity,status,created_at,updated_at")
+      .eq("project_id",project.id).eq("network",MAINNET).maybeSingle();
+    if(error)throw httpError(502,"ALBUKHR treasury lookup failed.");
+    return res.status(200).json({
+      success:true,
+      data:{
+        project_id:project.id,
+        project_code:project.project_code,
+        project_status:project.status,
+        core_slot:project.core_slot,
+        network:MAINNET,
+        configured:Boolean(data),
+        treasury:data||null
+      }
+    });
+  }catch(error){
+    const status=Number(error?.status)||500;
+    return res.status(status).json({success:false,error:status>=500?"Unable to load project treasury.":error.message});
+  }
+});
+
+router.get("/api/project-treasury-history",async(req,res)=>{
+  try{
+    const identity=await verifiedPiIdentity(req);
+    void identity;
+    const projectCode=clean(req.query.project_code,"project_code",100);
+    const limit=Math.min(Math.max(Number(req.query.limit)||20,1),100);
+    const project=await getProject(projectCode,{requireActive:false});
+    const {data,error}=await supabase.from("project_treasury_transactions")
+      .select("id,project_id,payment_id,transaction_type,amount,balance_after,reference,metadata,created_at")
+      .eq("project_id",project.id).order("created_at",{ascending:false}).limit(limit);
+    if(error)throw httpError(502,"ALBUKHR treasury history lookup failed.");
+    return res.status(200).json({
+      success:true,
+      data:Array.isArray(data)?data:[]
+    });
+  }catch(error){
+    const status=Number(error?.status)||500;
+    return res.status(status).json({success:false,error:status>=500?"Unable to load project treasury history.":error.message});
+  }
+});
+
 router.get("/api/my-stakes",async(req,res)=>{
   try{
     const identity=await verifiedPiIdentity(req);
