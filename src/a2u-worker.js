@@ -1,8 +1,6 @@
 "use strict";
 
-const {
-  executeWithdrawalPayout
-} = require("./financial-gateway");
+const { executeWithdrawalPayout } = require("./financial-gateway");
 const { supabase } = require("./supabase-client");
 
 const MAINNET = "mainnet";
@@ -44,9 +42,7 @@ function requireA2UCronKey(req, res, next) {
 async function claimWithdrawalPayout(withdrawalRequestId) {
   const { data, error } = await supabase.rpc(
     "claim_a2u_withdrawal_payout",
-    {
-      p_withdrawal_request_id: withdrawalRequestId
-    }
+    { p_withdrawal_request_id: withdrawalRequestId }
   );
 
   if (error) {
@@ -57,12 +53,10 @@ async function claimWithdrawalPayout(withdrawalRequestId) {
       details: error.details,
       hint: error.hint
     });
-
     throw httpError(502, "A2U payout claim failed.", "A2U_PAYOUT_CLAIM_FAILED");
   }
 
   const row = Array.isArray(data) ? data[0] : data;
-
   return {
     claimed: Boolean(row?.claimed),
     reason: String(row?.reason || ""),
@@ -102,23 +96,19 @@ async function finishWithdrawalPayout(
   }
 }
 
-async function processApprovedWithdrawals() {
-  const { data, error } = await supabase
-    .from("withdrawal_requests")
-    .select("id,status,network,created_at")
-    .eq("network", MAINNET)
-    .eq("status", "approved")
-    .order("created_at", { ascending: true })
-    .limit(MAX_BATCH);
+async function getApprovedWithdrawalQueue() {
+  const { data, error } = await supabase.rpc(
+    "get_a2u_approved_withdrawal_queue",
+    { p_batch_size: MAX_BATCH }
+  );
 
   if (error) {
-    console.error("[ALBUKHR API] Approved withdrawal queue lookup failed", {
+    console.error("[ALBUKHR API] Approved withdrawal queue RPC failed", {
       code: error.code,
       message: error.message,
       details: error.details,
       hint: error.hint
     });
-
     throw httpError(
       502,
       "Approved withdrawal queue lookup failed.",
@@ -126,7 +116,11 @@ async function processApprovedWithdrawals() {
     );
   }
 
-  const rows = Array.isArray(data) ? data : [];
+  return Array.isArray(data) ? data : [];
+}
+
+async function processApprovedWithdrawals() {
+  const rows = await getApprovedWithdrawalQueue();
   const results = [];
 
   for (const row of rows) {
@@ -177,15 +171,9 @@ async function processApprovedWithdrawals() {
   return {
     network: MAINNET,
     selected: rows.length,
-    processed: results.filter(
-      x => x.status === "paid"
-    ).length,
-    failed: results.filter(
-      x => x.status === "failed"
-    ).length,
-    skipped: results.filter(
-      x => x.status === "skipped"
-    ).length,
+    processed: results.filter(x => x.status === "paid").length,
+    failed: results.filter(x => x.status === "failed").length,
+    skipped: results.filter(x => x.status === "skipped").length,
     results
   };
 }
