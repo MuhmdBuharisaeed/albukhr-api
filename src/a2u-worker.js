@@ -11,9 +11,10 @@ const MAX_BATCH = Math.max(
   Math.min(Number(process.env.A2U_PAYOUT_BATCH_SIZE || 5), 20)
 );
 
-function httpError(status, message) {
+function httpError(status, message, code = null) {
   const e = new Error(message);
   e.status = status;
+  if (code) e.code = code;
   return e;
 }
 
@@ -49,7 +50,15 @@ async function claimWithdrawalPayout(withdrawalRequestId) {
   );
 
   if (error) {
-    throw httpError(502, "A2U payout claim failed.");
+    console.error("[ALBUKHR API] A2U payout claim RPC failed", {
+      withdrawal_request_id: withdrawalRequestId,
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint
+    });
+
+    throw httpError(502, "A2U payout claim failed.", "A2U_PAYOUT_CLAIM_FAILED");
   }
 
   const row = Array.isArray(data) ? data[0] : data;
@@ -86,7 +95,9 @@ async function finishWithdrawalPayout(
       withdrawal_request_id: withdrawalRequestId,
       status,
       code: error.code,
-      message: error.message
+      message: error.message,
+      details: error.details,
+      hint: error.hint
     });
   }
 }
@@ -101,7 +112,18 @@ async function processApprovedWithdrawals() {
     .limit(MAX_BATCH);
 
   if (error) {
-    throw httpError(502, "Approved withdrawal queue lookup failed.");
+    console.error("[ALBUKHR API] Approved withdrawal queue lookup failed", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint
+    });
+
+    throw httpError(
+      502,
+      "Approved withdrawal queue lookup failed.",
+      "A2U_QUEUE_LOOKUP_FAILED"
+    );
   }
 
   const rows = Array.isArray(data) ? data : [];
