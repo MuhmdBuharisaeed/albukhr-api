@@ -1,4 +1,4 @@
-/* ALBUKHR API — Mainnet financial + Contributor gateway v2.3.0 */
+/* ALBUKHR API — Mainnet financial + Contributor + Internal Investment gateway v2.3.0 */
 "use strict";
 
 const express = require("express");
@@ -9,6 +9,7 @@ const rateLimit = require("express-rate-limit");
 const { createMainnetApi } = require("./src/mainnet-api");
 const { financialGatewayRouter } = require("./src/financial-gateway");
 const { contributorGatewayRouter } = require("./src/contributor-gateway");
+const { internalInvestmentGatewayRouter } = require("./src/internal-investment-gateway");
 
 const app = express();
 const api = createMainnetApi();
@@ -35,11 +36,7 @@ app.use(
     origin(origin, callback) {
       if (!origin) return callback(null, true);
 
-      // Preserve the existing API behavior: when ALLOWED_ORIGINS is not
-      // configured, do not block browser origins at this middleware layer.
-      // Production should set ALLOWED_ORIGINS explicitly.
       if (allowedOrigins.length === 0) return callback(null, true);
-
       if (allowedOrigins.includes(origin)) return callback(null, true);
 
       return callback(new Error("Origin is not allowed."));
@@ -135,16 +132,13 @@ app.get("/wallet-status", api.requireOpsKey, async (_req, res) => {
   }
 });
 
-/*
- * Contributor gateway
- *
- * The API verifies the Pi access token server-side and then uses the
- * service-role-only Supabase gateway RPCs. The browser never supplies the
- * authoritative Pi UID to the database.
- */
+/* Contributor gateway. */
 app.use(contributorGatewayRouter);
 
-/* Existing Mainnet financial gateway. */
+/* Dedicated Contributor Internal investment gateway. */
+app.use(internalInvestmentGatewayRouter);
+
+/* Existing Mainnet financial gateway — Core path preserved unchanged. */
 app.use(financialGatewayRouter);
 
 for (const route of ["/approve", "/complete", "/withdraw", "/pay-withdraw"]) {
