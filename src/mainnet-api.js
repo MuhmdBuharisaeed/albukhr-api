@@ -8,6 +8,7 @@ const { supabase, SUPABASE_URL } = require("./supabase-client");
 
 const MAINNET_URL = "https://ribpntyqdleytsyktdfb.supabase.co";
 const HORIZON = "https://api.mainnet.minepi.com";
+const API_VERSION = "2.3.0";
 
 const CORE_TABLES = ["projects", "users", "login_events"];
 const LIQUIDITY_TABLES = [
@@ -85,7 +86,8 @@ function isMissingTableError(error) {
   if (combined.includes("relation") && combined.includes("does not exist"))
     return true;
   if (combined.includes("could not find the table")) return true;
-  if (combined.includes("table") && combined.includes("not found")) return true;
+  if (combined.includes("table") && combined.includes("not found"))
+    return true;
   if (combined.includes("schema cache") && combined.includes("table"))
     return true;
 
@@ -315,7 +317,7 @@ async function health() {
       status: database.status === "ok" ? "ok" : "degraded",
       service: "albukhr-api",
       network: "mainnet",
-      version: "2.1.0",
+      version: API_VERSION,
       supabase_url: MAINNET_URL,
       database,
     };
@@ -330,7 +332,7 @@ async function health() {
       status: "error",
       service: "albukhr-api",
       network: "mainnet",
-      version: "2.1.0",
+      version: API_VERSION,
       supabase_url: MAINNET_URL,
       database: {
         status: "error",
