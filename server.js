@@ -1,4 +1,4 @@
-/* ALBUKHR API — Mainnet financial + Contributor + Internal Investment gateway v2.3.0 */
+/* ALBUKHR API — Mainnet financial + Contributor + Internal Investment + Internal Liquidity gateway v2.3.0 */
 "use strict";
 
 const express = require("express");
@@ -10,6 +10,7 @@ const { createMainnetApi } = require("./src/mainnet-api");
 const { financialGatewayRouter } = require("./src/financial-gateway");
 const { contributorGatewayRouter } = require("./src/contributor-gateway");
 const { internalInvestmentGatewayRouter } = require("./src/internal-investment-gateway");
+const { internalLiquidityGatewayRouter } = require("./src/internal-liquidity-gateway");
 
 const app = express();
 const api = createMainnetApi();
@@ -137,6 +138,9 @@ app.use(contributorGatewayRouter);
 
 /* Dedicated Contributor Internal investment gateway. */
 app.use(internalInvestmentGatewayRouter);
+
+/* Dedicated Contributor Internal Liquidity gateway. */
+app.use(internalLiquidityGatewayRouter);
 
 /* Existing Mainnet financial gateway — Core path preserved unchanged. */
 app.use(financialGatewayRouter);
