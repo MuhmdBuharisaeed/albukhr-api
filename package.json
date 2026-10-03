@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check src/mainnet-api.js && node --check src/financial-gateway.js && node --check src/pi-client.js && node --check src/supabase-client.js && node --check src/contributor-gateway.js"
+    "check": "node --check server.js && node --check src/mainnet-api.js && node --check src/financial-gateway.js && node --check src/pi-client.js && node --check src/supabase-client.js && node --check src/contributor-gateway.js && node --check src/internal-investment-gateway.js"
   },
   "engines": {
     "node": ">=20.0.0 <25.0.0"
