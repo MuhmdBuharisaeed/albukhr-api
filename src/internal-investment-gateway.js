@@ -125,7 +125,16 @@ async function getInternalTreasury(projectId) {
 }
 
 function paymentStatus(payment) {
-  return String(payment?.status || payment?.transaction?.status || "")
+  const status = payment?.status;
+
+  if (status && typeof status === "object") {
+    if (status.cancelled || status.user_cancelled) return "cancelled";
+    if (status.developer_completed) return "completed";
+    if (status.developer_approved) return "approved";
+    return "pending";
+  }
+
+  return String(status || payment?.transaction?.status || "")
     .trim()
     .toLowerCase();
 }
@@ -142,6 +151,7 @@ function paymentRecipient(payment) {
 
 function paymentSenderUid(payment) {
   return String(
+    payment?.user_uid ||
     payment?.from_uid ||
     payment?.sender_uid ||
     payment?.sender?.uid ||
