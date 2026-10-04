@@ -1,4 +1,4 @@
-/* ALBUKHR API — Mainnet financial + Contributor + Internal Investment + Internal Liquidity gateway v2.3.0 */
+/* ALBUKHR API — Mainnet financial + Contributor + Internal Funding + Internal Investment + Internal Liquidity gateway v2.3.0 */
 "use strict";
 
 const express = require("express");
@@ -9,8 +9,15 @@ const rateLimit = require("express-rate-limit");
 const { createMainnetApi } = require("./src/mainnet-api");
 const { financialGatewayRouter } = require("./src/financial-gateway");
 const { contributorGatewayRouter } = require("./src/contributor-gateway");
-const { internalInvestmentGatewayRouter } = require("./src/internal-investment-gateway");
-const { internalLiquidityGatewayRouter } = require("./src/internal-liquidity-gateway");
+const {
+  internalFundingGatewayRouter
+} = require("./src/internal-funding-gateway");
+const {
+  internalInvestmentGatewayRouter
+} = require("./src/internal-investment-gateway");
+const {
+  internalLiquidityGatewayRouter
+} = require("./src/internal-liquidity-gateway");
 
 const app = express();
 const api = createMainnetApi();
@@ -21,34 +28,55 @@ const HOST = "0.0.0.0";
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
 
-const allowedOrigins = String(process.env.ALLOWED_ORIGINS || "")
+const allowedOrigins = String(
+  process.env.ALLOWED_ORIGINS || ""
+)
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
 
 app.use(
   helmet({
-    crossOriginResourcePolicy: { policy: "cross-origin" }
+    crossOriginResourcePolicy: {
+      policy: "cross-origin"
+    }
   })
 );
 
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin) return callback(null, true);
+      if (!origin) {
+        return callback(null, true);
+      }
 
-      if (allowedOrigins.length === 0) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
+      if (allowedOrigins.length === 0) {
+        return callback(null, true);
+      }
 
-      return callback(new Error("Origin is not allowed."));
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(
+        new Error("Origin is not allowed.")
+      );
     },
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-API-Key"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-API-Key"
+    ],
     credentials: false
   })
 );
 
-app.use(express.json({ limit: "100kb" }));
+app.use(
+  express.json({
+    limit: "100kb"
+  })
+);
 
 app.use(
   rateLimit({
@@ -73,10 +101,17 @@ app.get("/health", async (_req, res) => {
     const health = await api.health();
 
     return res
-      .status(health.status === "ok" ? 200 : 503)
+      .status(
+        health.status === "ok"
+          ? 200
+          : 503
+      )
       .json(health);
   } catch (error) {
-    console.error("[ALBUKHR API] Health check failed:", error);
+    console.error(
+      "[ALBUKHR API] Health check failed:",
+      error
+    );
 
     return res.status(503).json({
       status: "error",
@@ -92,10 +127,17 @@ app.get("/supabase-status", async (_req, res) => {
     const status = await api.databaseStatus();
 
     return res
-      .status(status.status === "ok" ? 200 : 503)
+      .status(
+        status.status === "ok"
+          ? 200
+          : 503
+      )
       .json(status);
   } catch (error) {
-    console.error("[ALBUKHR API] Supabase status failed:", error);
+    console.error(
+      "[ALBUKHR API] Supabase status failed:",
+      error
+    );
 
     return res.status(503).json({
       status: "error",
@@ -105,36 +147,63 @@ app.get("/supabase-status", async (_req, res) => {
   }
 });
 
-app.get("/mainnet-status", api.requireOpsKey, async (_req, res) => {
-  try {
-    return res.status(200).json(await api.mainnetStatus());
-  } catch (error) {
-    console.error("[ALBUKHR API] Mainnet status failed:", error);
+app.get(
+  "/mainnet-status",
+  api.requireOpsKey,
+  async (_req, res) => {
+    try {
+      return res
+        .status(200)
+        .json(await api.mainnetStatus());
+    } catch (error) {
+      console.error(
+        "[ALBUKHR API] Mainnet status failed:",
+        error
+      );
 
-    return res.status(503).json({
-      success: false,
-      network: "mainnet",
-      error: "Mainnet Horizon status unavailable."
-    });
+      return res.status(503).json({
+        success: false,
+        network: "mainnet",
+        error:
+          "Mainnet Horizon status unavailable."
+      });
+    }
   }
-});
+);
 
-app.get("/wallet-status", api.requireOpsKey, async (_req, res) => {
-  try {
-    return res.status(200).json(await api.walletStatus());
-  } catch (error) {
-    console.error("[ALBUKHR API] Wallet status failed:", error);
+app.get(
+  "/wallet-status",
+  api.requireOpsKey,
+  async (_req, res) => {
+    try {
+      return res
+        .status(200)
+        .json(await api.walletStatus());
+    } catch (error) {
+      console.error(
+        "[ALBUKHR API] Wallet status failed:",
+        error
+      );
 
-    return res.status(503).json({
-      success: false,
-      network: "mainnet",
-      error: "Wallet status unavailable."
-    });
+      return res.status(503).json({
+        success: false,
+        network: "mainnet",
+        error: "Wallet status unavailable."
+      });
+    }
   }
-});
+);
 
 /* Contributor gateway. */
 app.use(contributorGatewayRouter);
+
+/*
+ * Dedicated Contributor Internal Funding gateway.
+ *
+ * Funding-plan submission and assessment flow are kept separate
+ * from the liquidity payment gateway and from Core Financial.
+ */
+app.use(internalFundingGatewayRouter);
 
 /* Dedicated Contributor Internal investment gateway. */
 app.use(internalInvestmentGatewayRouter);
@@ -142,11 +211,21 @@ app.use(internalInvestmentGatewayRouter);
 /* Dedicated Contributor Internal Liquidity gateway. */
 app.use(internalLiquidityGatewayRouter);
 
-/* Existing Mainnet financial gateway — Core path preserved unchanged. */
+/*
+ * Existing Mainnet financial gateway — Core path preserved unchanged.
+ */
 app.use(financialGatewayRouter);
 
-for (const route of ["/approve", "/complete", "/withdraw", "/pay-withdraw"]) {
-  app.post(route, api.financialUnavailable);
+for (const route of [
+  "/approve",
+  "/complete",
+  "/withdraw",
+  "/pay-withdraw"
+]) {
+  app.post(
+    route,
+    api.financialUnavailable
+  );
 }
 
 app.use((req, res) =>
@@ -157,46 +236,87 @@ app.use((req, res) =>
   })
 );
 
-app.use((error, _req, res, _next) => {
-  if (error?.message === "Origin is not allowed.") {
-    return res.status(403).json({
+app.use(
+  (error, _req, res, _next) => {
+    if (
+      error?.message ===
+      "Origin is not allowed."
+    ) {
+      return res.status(403).json({
+        success: false,
+        error: "Origin is not allowed."
+      });
+    }
+
+    console.error(
+      "[ALBUKHR API] Unhandled error:",
+      error
+    );
+
+    return res.status(500).json({
       success: false,
-      error: "Origin is not allowed."
+      error: "Internal server error."
     });
   }
-
-  console.error("[ALBUKHR API] Unhandled error:", error);
-
-  return res.status(500).json({
-    success: false,
-    error: "Internal server error."
-  });
-});
-
-const server = app.listen(PORT, HOST, () =>
-  console.log(`ALBUKHR MAINNET API v2.3.0 running on ${HOST}:${PORT}`)
 );
 
-process.on("unhandledRejection", (reason) =>
-  console.error("[ALBUKHR API] Unhandled promise rejection:", reason)
+const server = app.listen(
+  PORT,
+  HOST,
+  () =>
+    console.log(
+      `ALBUKHR MAINNET API v2.3.0 running on ${HOST}:${PORT}`
+    )
 );
 
-process.on("uncaughtException", (error) => {
-  console.error("[ALBUKHR API] Uncaught exception:", error);
+process.on(
+  "unhandledRejection",
+  (reason) =>
+    console.error(
+      "[ALBUKHR API] Unhandled promise rejection:",
+      reason
+    )
+);
 
-  server.close(() => process.exit(1));
-});
+process.on(
+  "uncaughtException",
+  (error) => {
+    console.error(
+      "[ALBUKHR API] Uncaught exception:",
+      error
+    );
+
+    server.close(() =>
+      process.exit(1)
+    );
+  }
+);
 
 function shutdown(signal) {
-  console.log(`[ALBUKHR API] ${signal} received. Shutting down...`);
+  console.log(
+    `[ALBUKHR API] ${signal} received. Shutting down...`
+  );
 
   server.close(() => {
-    console.log("[ALBUKHR API] Server closed.");
+    console.log(
+      "[ALBUKHR API] Server closed."
+    );
+
     process.exit(0);
   });
 
-  setTimeout(() => process.exit(1), 10_000).unref();
+  setTimeout(
+    () => process.exit(1),
+    10_000
+  ).unref();
 }
 
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+process.on(
+  "SIGTERM",
+  () => shutdown("SIGTERM")
+);
+
+process.on(
+  "SIGINT",
+  () => shutdown("SIGINT")
+);
