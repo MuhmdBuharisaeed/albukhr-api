@@ -141,6 +141,28 @@ app.use(
 
 
 /* =========================================================
+   EXTERNAL PROJECT LOGO RAW BODY
+========================================================= */
+
+/*
+ * The External Project logo route receives image bytes, not JSON.
+ *
+ * This middleware is intentionally scoped to the logo path so the
+ * existing JSON API contract for every other route remains unchanged.
+ *
+ * The gateway itself enforces the stricter 1 MB project-logo limit after
+ * receiving the Buffer. The parser ceiling is only a memory/request guard.
+ */
+app.use(
+  "/api/external-project/:applicationId/logo",
+  express.raw({
+    type: () => true,
+    limit: "2mb"
+  })
+);
+
+
+/* =========================================================
    JSON BODY
 ========================================================= */
 
@@ -534,7 +556,7 @@ process.on(
     console.error(
       "[ALBUKHR API] Unhandled promise rejection:",
       reason
-    )
+  )
 );
 
 
