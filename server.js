@@ -409,6 +409,7 @@ app.use(
  * existing pages.
  */
 app.use(
+  "/api/external-project",
   externalProjectGatewayRouter
 );
 
