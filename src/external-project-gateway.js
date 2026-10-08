@@ -20,6 +20,7 @@ const { getPioneer } = require("./pi-client");
 
 const router = express.Router();
 const MAINNET = "mainnet";
+const DOCUMENT_BUCKET = "external-project-documents";
 
 function httpError(status, message) {
   const error = new Error(message);
@@ -128,6 +129,38 @@ async function callRpc(functionName, args) {
   }
 
   return data;
+}
+
+async function removePrivateDocumentObject(storageBucket, storagePath) {
+  const bucket = clean(storageBucket);
+  const path = clean(storagePath);
+
+  if (bucket !== DOCUMENT_BUCKET) {
+    throw httpError(502, "The stored document bucket is invalid.");
+  }
+
+  if (!path || !path.startsWith(MAINNET + "/")) {
+    throw httpError(502, "The stored document path is invalid.");
+  }
+
+  const { error } = await supabase.storage
+    .from(DOCUMENT_BUCKET)
+    .remove([path]);
+
+  if (error) {
+    console.error(
+      "[ALBUKHR EXTERNAL PROJECT GATEWAY] Private document storage removal failed",
+      {
+        bucket: DOCUMENT_BUCKET,
+        path,
+        message: error.message,
+        details: error.details,
+        hint: error.hint
+      }
+    );
+
+    throw httpError(502, "The document record was changed but its private file could not be removed.");
+  }
 }
 
 function respond(handler) {
@@ -376,13 +409,30 @@ router.post(
 
 router.delete(
   "/:applicationId/documents/:documentId",
-  respond(async (req, identity) =>
-    callRpc("delete_my_external_project_document", {
+  respond(async (req, identity) => {
+    const deleted = await callRpc("delete_my_external_project_document", {
       p_document_id: uuid(req.params.documentId, "document_id"),
       p_pi_uid: identity.pi_uid,
       p_network: MAINNET
-    })
-  )
+    });
+
+    const record = Array.isArray(deleted) ? deleted[0] : deleted;
+
+    if (!record?.storage_bucket || !record?.storage_path) {
+      throw httpError(502, "The document deletion record was incomplete.");
+    }
+
+    await removePrivateDocumentObject(
+      record.storage_bucket,
+      record.storage_path
+    );
+
+    return {
+      deleted: true,
+      document_id: uuid(req.params.documentId, "document_id"),
+      storage_deleted: true
+    };
+  })
 );
 
 /* -------------------------------------------------------------------------- */
