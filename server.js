@@ -121,10 +121,13 @@ app.use(
     },
 
     methods: [
-      "GET",
-      "POST",
-      "OPTIONS"
-    ],
+  "GET",
+  "POST",
+  "PATCH",
+  "PUT",
+  "DELETE",
+  "OPTIONS"
+],
 
     allowedHeaders: [
       "Content-Type",
