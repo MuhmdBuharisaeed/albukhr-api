@@ -5,12 +5,15 @@
  *   Browser -> Pi access token -> Pi /v2/me -> verified pi_uid
  *   -> existing applicant RPCs
  *
+ * Project logo path:
+ *   Browser -> trusted gateway -> verified Pi UID
+ *   -> ownership/status validation -> service-role storage upload
+ *   -> service-role logo RPC attachment
+ *
  * IMPORTANT:
  * - This gateway never accepts p_pi_uid from the browser.
  * - The existing applicant RPCs are intentionally reused during migration.
- * - Direct PUBLIC/anon EXECUTE on those RPCs must remain until all callers
- *   have migrated and cross-user validation is complete; revocation is a
- *   separate final step.
+ * - Project logo bytes are never uploaded directly from the browser to Supabase.
  */
 "use strict";
 
@@ -19,8 +22,12 @@ const { supabase } = require("./supabase-client");
 const { getPioneer } = require("./pi-client");
 
 const router = express.Router();
+
 const MAINNET = "mainnet";
 const DOCUMENT_BUCKET = "external-project-documents";
+const PROJECT_LOGO_BUCKET = "project-logos";
+const PROJECT_LOGO_MAX = 1048576;
+const PROJECT_LOGO_PREFIX = "external-applications/";
 
 function httpError(status, message) {
   const error = new Error(message);
@@ -111,6 +118,10 @@ function pickBody(input, allowed) {
   return output;
 }
 
+function firstRow(data) {
+  return Array.isArray(data) ? data[0] || null : data || null;
+}
+
 async function callRpc(functionName, args) {
   const { data, error } = await supabase.rpc(functionName, args);
 
@@ -129,6 +140,215 @@ async function callRpc(functionName, args) {
   }
 
   return data;
+}
+
+function normalizeLogoContentType(value) {
+  const type = clean(value).split(";")[0].toLowerCase();
+
+  if (!["image/png", "image/jpeg"].includes(type)) {
+    throw httpError(415, "Project logo must be PNG or JPG/JPEG.");
+  }
+
+  return type;
+}
+
+function inspectPng(buffer) {
+  if (
+    buffer.length < 24 ||
+    !buffer.subarray(0, 8).equals(
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+    )
+  ) {
+    throw httpError(415, "The uploaded file is not a valid PNG image.");
+  }
+
+  if (buffer.toString("ascii", 12, 16) !== "IHDR") {
+    throw httpError(415, "The uploaded PNG image is malformed.");
+  }
+
+  const width = buffer.readUInt32BE(16);
+  const height = buffer.readUInt32BE(20);
+
+  return { width, height, format: "png" };
+}
+
+function inspectJpeg(buffer) {
+  if (
+    buffer.length < 4 ||
+    buffer[0] !== 0xff ||
+    buffer[1] !== 0xd8
+  ) {
+    throw httpError(415, "The uploaded file is not a valid JPEG image.");
+  }
+
+  const sofMarkers = new Set([
+    0xc0, 0xc1, 0xc2, 0xc3,
+    0xc5, 0xc6, 0xc7,
+    0xc9, 0xca, 0xcb,
+    0xcd, 0xce, 0xcf
+  ]);
+
+  let offset = 2;
+
+  while (offset < buffer.length) {
+    while (offset < buffer.length && buffer[offset] === 0xff) {
+      offset += 1;
+    }
+
+    if (offset >= buffer.length) break;
+
+    const marker = buffer[offset];
+    offset += 1;
+
+    if (marker === 0xd8 || marker === 0xd9) {
+      continue;
+    }
+
+    if (marker >= 0xd0 && marker <= 0xd7) {
+      continue;
+    }
+
+    if (offset + 2 > buffer.length) break;
+
+    const segmentLength = buffer.readUInt16BE(offset);
+
+    if (
+      segmentLength < 2 ||
+      offset + segmentLength > buffer.length
+    ) {
+      throw httpError(415, "The uploaded JPEG image is malformed.");
+    }
+
+    if (sofMarkers.has(marker)) {
+      if (segmentLength < 7) {
+        throw httpError(415, "The uploaded JPEG image is malformed.");
+      }
+
+      const height = buffer.readUInt16BE(offset + 3);
+      const width = buffer.readUInt16BE(offset + 5);
+
+      return { width, height, format: "jpg" };
+    }
+
+    offset += segmentLength;
+  }
+
+  throw httpError(415, "The uploaded JPEG image dimensions could not be verified.");
+}
+
+function inspectProjectLogo(buffer, contentType) {
+  if (!Buffer.isBuffer(buffer)) {
+    throw httpError(400, "Project logo image data is missing.");
+  }
+
+  if (buffer.length <= 0) {
+    throw httpError(400, "The selected project logo is empty.");
+  }
+
+  if (buffer.length > PROJECT_LOGO_MAX) {
+    throw httpError(413, "Project logo must be no larger than 1 MB.");
+  }
+
+  const mime = normalizeLogoContentType(contentType);
+
+  const metadata =
+    mime === "image/png"
+      ? inspectPng(buffer)
+      : inspectJpeg(buffer);
+
+  if (
+    metadata.width < 400 ||
+    metadata.height < 400
+  ) {
+    throw httpError(
+      400,
+      "Project logo must be at least 400 x 400 pixels."
+    );
+  }
+
+  return {
+    mime,
+    width: metadata.width,
+    height: metadata.height,
+    format: metadata.format,
+    size_bytes: buffer.length
+  };
+}
+
+function logoPath(applicationId) {
+  return PROJECT_LOGO_PREFIX + applicationId + "/logo";
+}
+
+async function backupExistingLogo(path) {
+  try {
+    const { data, error } = await supabase.storage
+      .from(PROJECT_LOGO_BUCKET)
+      .download(path);
+
+    if (error || !data) {
+      return null;
+    }
+
+    const buffer = Buffer.from(await data.arrayBuffer());
+
+    return {
+      buffer,
+      contentType: clean(data.type) || "image/jpeg"
+    };
+  } catch (error) {
+    console.warn(
+      "[ALBUKHR EXTERNAL PROJECT GATEWAY] Existing logo backup failed; upload will continue without rollback buffer.",
+      {
+        path,
+        message: error?.message || null
+      }
+    );
+
+    return null;
+  }
+}
+
+async function restoreExistingLogo(path, previous) {
+  if (!previous) {
+    const { error } = await supabase.storage
+      .from(PROJECT_LOGO_BUCKET)
+      .remove([path]);
+
+    if (error) {
+      console.error(
+        "[ALBUKHR EXTERNAL PROJECT GATEWAY] Logo rollback removal failed",
+        {
+          path,
+          message: error.message
+        }
+      );
+    }
+
+    return;
+  }
+
+  const { error } = await supabase.storage
+    .from(PROJECT_LOGO_BUCKET)
+    .upload(
+      path,
+      previous.buffer,
+      {
+        upsert: true,
+        contentType: previous.contentType,
+        cacheControl: "3600"
+      }
+    );
+
+  if (error) {
+    console.error(
+      "[ALBUKHR EXTERNAL PROJECT GATEWAY] Existing logo restoration failed",
+      {
+        path,
+        message: error.message,
+        details: error.details
+      }
+    );
+  }
 }
 
 async function removePrivateDocumentObject(storageBucket, storagePath) {
@@ -330,6 +550,128 @@ router.post(
       p_network: MAINNET
     })
   )
+);
+
+/* -------------------------------------------------------------------------- */
+/* Project logo                                                               */
+/* -------------------------------------------------------------------------- */
+
+router.get(
+  "/:applicationId/logo",
+  respond(async (req, identity) =>
+    callRpc("get_my_external_project_logo", {
+      p_application_id: uuid(req.params.applicationId),
+      p_pi_uid: identity.pi_uid,
+      p_network: MAINNET
+    })
+  )
+);
+
+router.post(
+  "/:applicationId/logo",
+  respond(async (req, identity) => {
+    const applicationId = uuid(req.params.applicationId);
+    const path = logoPath(applicationId);
+    const contentType = normalizeLogoContentType(req.headers["content-type"]);
+    const image = inspectProjectLogo(req.body, contentType);
+
+    // Authorize the application before touching public project-logo storage.
+    const applicationData = await callRpc(
+      "get_my_external_project_detail",
+      {
+        p_application_id: applicationId,
+        p_pi_uid: identity.pi_uid,
+        p_network: MAINNET
+      }
+    );
+
+    const application = firstRow(applicationData);
+
+    if (!application) {
+      throw httpError(404, "Application not found or access denied.");
+    }
+
+    if (!["draft", "needs_revision"].includes(clean(application.status).toLowerCase())) {
+      throw httpError(
+        409,
+        "Project logo can only be changed while the application is a draft or needs revision."
+      );
+    }
+
+    const previous = await backupExistingLogo(path);
+
+    const { error: uploadError } = await supabase.storage
+      .from(PROJECT_LOGO_BUCKET)
+      .upload(
+        path,
+        req.body,
+        {
+          upsert: true,
+          contentType: image.mime,
+          cacheControl: "3600"
+        }
+      );
+
+    if (uploadError) {
+      console.error(
+        "[ALBUKHR EXTERNAL PROJECT GATEWAY] Project logo storage upload failed",
+        {
+          bucket: PROJECT_LOGO_BUCKET,
+          path,
+          message: uploadError.message,
+          details: uploadError.details,
+          hint: uploadError.hint
+        }
+      );
+
+      throw httpError(502, "Project logo storage upload failed.");
+    }
+
+    const publicUrl =
+      supabase.storage
+        .from(PROJECT_LOGO_BUCKET)
+        .getPublicUrl(path)
+        .data
+        .publicUrl;
+
+    try {
+      const attached = await callRpc(
+        "gateway_attach_my_external_project_logo",
+        {
+          p_application_id: applicationId,
+          p_pi_uid: identity.pi_uid,
+          p_network: MAINNET,
+          p_logo_url: publicUrl,
+          p_logo_path: path,
+          p_logo_width: image.width,
+          p_logo_height: image.height,
+          p_logo_format: image.format,
+          p_logo_size_bytes: image.size_bytes
+        }
+      );
+
+      const result = firstRow(attached);
+
+      if (result && result.success === false) {
+        throw httpError(
+          409,
+          result.message || "Project logo registration was not accepted."
+        );
+      }
+
+      if (!result || result.success !== true) {
+        throw httpError(
+          502,
+          "Project logo registration returned an invalid result."
+        );
+      }
+
+      return result;
+    } catch (error) {
+      await restoreExistingLogo(path, previous);
+      throw error;
+    }
+  })
 );
 
 /* -------------------------------------------------------------------------- */
