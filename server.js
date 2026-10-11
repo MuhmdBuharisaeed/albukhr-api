@@ -1,4 +1,10 @@
-/* ALBUKHR API — Mainnet financial + Contributor + Internal Funding + Internal Investment + Internal Liquidity + External Project gateway v2.3.0 */
+
+/* ALBUKHR API — Mainnet Financial + Contributor + Internal Funding
+ * + Internal Investment + Internal Liquidity + External Project
+ * + Mainnet Identity + DApp Service v2
+ *
+ * Version: 2.3.0
+ */
 "use strict";
 
 const express = require("express");
@@ -22,49 +28,27 @@ const {
   internalLiquidityGatewayRouter
 } = require("./src/internal-liquidity-gateway");
 
-/*
- * External Project Trusted Gateway.
- *
- * Trust boundary:
- *
- * Browser
- *   ↓
- * Pi access token
- *   ↓
- * Pi Platform API verification
- *   ↓
- * verified Pi UID
- *   ↓
- * External Project applicant RPCs
- *
- * The browser does not become the authoritative source
- * of the applicant identity.
- */
 const {
   externalProjectGatewayRouter
 } = require("./src/external-project-gateway");
 
+const {
+  mainnetIdentityGatewayRouter
+} = require("./src/mainnet-identity-gateway");
+
+
+/* =========================================================
+   APPLICATION INITIALIZATION
+========================================================= */
 
 const app = express();
 const api = createMainnetApi();
 
-const PORT = Number(
-  process.env.PORT || 3000
-);
-
+const PORT = Number(process.env.PORT || 3000);
 const HOST = "0.0.0.0";
 
-
-/* =========================================================
-   BASIC APPLICATION HARDENING
-========================================================= */
-
 app.disable("x-powered-by");
-
-app.set(
-  "trust proxy",
-  1
-);
+app.set("trust proxy", 1);
 
 
 /* =========================================================
@@ -78,7 +62,6 @@ const allowedOrigins = String(
   .map((value) => value.trim())
   .filter(Boolean);
 
-
 app.use(
   helmet({
     crossOriginResourcePolicy: {
@@ -87,47 +70,34 @@ app.use(
   })
 );
 
-
 app.use(
   cors({
     origin(origin, callback) {
-      /*
-       * Non-browser requests without Origin remain allowed.
-       * This preserves existing API/server-to-server behavior.
-       */
+      // Preserve server-to-server requests without Origin.
       if (!origin) {
         return callback(null, true);
       }
 
-      /*
-       * Preserve existing behavior when no explicit
-       * ALLOWED_ORIGINS environment variable is configured.
-       */
+      // Preserve existing behavior when no allowlist is configured.
       if (allowedOrigins.length === 0) {
         return callback(null, true);
       }
 
-      if (
-        allowedOrigins.includes(origin)
-      ) {
+      if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
 
-      return callback(
-        new Error(
-          "Origin is not allowed."
-        )
-      );
+      return callback(new Error("Origin is not allowed."));
     },
 
     methods: [
-  "GET",
-  "POST",
-  "PATCH",
-  "PUT",
-  "DELETE",
-  "OPTIONS"
-],
+      "GET",
+      "POST",
+      "PATCH",
+      "PUT",
+      "DELETE",
+      "OPTIONS"
+    ],
 
     allowedHeaders: [
       "Content-Type",
@@ -144,15 +114,8 @@ app.use(
    EXTERNAL PROJECT LOGO RAW BODY
 ========================================================= */
 
-/*
- * The External Project logo route receives image bytes, not JSON.
- *
- * This middleware is intentionally scoped to the logo path so the
- * existing JSON API contract for every other route remains unchanged.
- *
- * The gateway itself enforces the stricter 1 MB project-logo limit after
- * receiving the Buffer. The parser ceiling is only a memory/request guard.
- */
+// This route receives image bytes rather than JSON.
+// The gateway must enforce the actual project-logo file limit.
 app.use(
   "/api/external-project/:applicationId/logo",
   express.raw({
@@ -191,15 +154,13 @@ app.use(
    ROOT
 ========================================================= */
 
-app.get(
-  "/",
-  (_req, res) =>
-    res.status(200).json({
-      service: "albukhr-api",
-      status: "ok",
-      network: "mainnet",
-      version: "2.3.0"
-    })
+app.get("/", (_req, res) =>
+  res.status(200).json({
+    service: "albukhr-api",
+    status: "ok",
+    network: "mainnet",
+    version: "2.3.0"
+  })
 );
 
 
@@ -207,73 +168,55 @@ app.get(
    HEALTH
 ========================================================= */
 
-app.get(
-  "/health",
-  async (_req, res) => {
-    try {
-      const health =
-        await api.health();
+app.get("/health", async (_req, res) => {
+  try {
+    const health = await api.health();
 
-      return res
-        .status(
-          health.status === "ok"
-            ? 200
-            : 503
-        )
-        .json(health);
+    return res
+      .status(health.status === "ok" ? 200 : 503)
+      .json(health);
 
-    } catch (error) {
-      console.error(
-        "[ALBUKHR API] Health check failed:",
-        error
-      );
+  } catch (error) {
+    console.error(
+      "[ALBUKHR API] Health check failed:",
+      error
+    );
 
-      return res.status(503).json({
-        status: "error",
-        service: "albukhr-api",
-        network: "mainnet",
-        error:
-          "Health check failed."
-      });
-    }
+    return res.status(503).json({
+      status: "error",
+      service: "albukhr-api",
+      network: "mainnet",
+      error: "Health check failed."
+    });
   }
-);
+});
 
 
 /* =========================================================
    SUPABASE STATUS
 ========================================================= */
 
-app.get(
-  "/supabase-status",
-  async (_req, res) => {
-    try {
-      const status =
-        await api.databaseStatus();
+app.get("/supabase-status", async (_req, res) => {
+  try {
+    const status = await api.databaseStatus();
 
-      return res
-        .status(
-          status.status === "ok"
-            ? 200
-            : 503
-        )
-        .json(status);
+    return res
+      .status(status.status === "ok" ? 200 : 503)
+      .json(status);
 
-    } catch (error) {
-      console.error(
-        "[ALBUKHR API] Supabase status failed:",
-        error
-      );
+  } catch (error) {
+    console.error(
+      "[ALBUKHR API] Supabase status failed:",
+      error
+    );
 
-      return res.status(503).json({
-        status: "error",
-        network: "mainnet",
-        error:
-          "Supabase status unavailable."
-      });
-    }
+    return res.status(503).json({
+      status: "error",
+      network: "mainnet",
+      error: "Supabase status unavailable."
+    });
   }
-);
+});
 
 
 /* =========================================================
@@ -287,9 +230,7 @@ app.get(
     try {
       return res
         .status(200)
-        .json(
-          await api.mainnetStatus()
-        );
+        .json(await api.mainnetStatus());
 
     } catch (error) {
       console.error(
@@ -300,8 +241,7 @@ app.get(
       return res.status(503).json({
         success: false,
         network: "mainnet",
-        error:
-          "Mainnet Horizon status unavailable."
+        error: "Mainnet Horizon status unavailable."
       });
     }
   }
@@ -319,9 +259,7 @@ app.get(
     try {
       return res
         .status(200)
-        .json(
-          await api.walletStatus()
-        );
+        .json(await api.walletStatus());
 
     } catch (error) {
       console.error(
@@ -332,8 +270,7 @@ app.get(
       return res.status(503).json({
         success: false,
         network: "mainnet",
-        error:
-          "Wallet status unavailable."
+        error: "Wallet status unavailable."
       });
     }
   }
@@ -344,57 +281,49 @@ app.get(
    CONTRIBUTOR GATEWAY
 ========================================================= */
 
-/*
- * Existing Contributor gateway.
- *
- * Preserved unchanged.
- */
-app.use(
-  contributorGatewayRouter
-);
+app.use(contributorGatewayRouter);
 
 
 /* =========================================================
-   CONTRIBUTOR INTERNAL FUNDING GATEWAY
+   INTERNAL FUNDING GATEWAY
 ========================================================= */
 
-/*
- * Funding-plan submission and assessment flow
- * are kept separate from the liquidity payment
- * gateway and from Core Financial.
- *
- * Existing contract preserved.
- */
-app.use(
-  internalFundingGatewayRouter
-);
+app.use(internalFundingGatewayRouter);
 
 
 /* =========================================================
-   CONTRIBUTOR INTERNAL INVESTMENT GATEWAY
+   INTERNAL INVESTMENT GATEWAY
 ========================================================= */
 
-/*
- * Existing Contributor Internal Investment gateway.
- *
- * Existing contract preserved.
- */
-app.use(
-  internalInvestmentGatewayRouter
-);
+app.use(internalInvestmentGatewayRouter);
 
 
 /* =========================================================
-   CONTRIBUTOR INTERNAL LIQUIDITY GATEWAY
+   INTERNAL LIQUIDITY GATEWAY
+========================================================= */
+
+app.use(internalLiquidityGatewayRouter);
+
+
+/* =========================================================
+   MAINNET IDENTITY GATEWAY
 ========================================================= */
 
 /*
- * Existing Contributor Internal Liquidity gateway.
+ * Provides the trusted Mainnet identity endpoint.
  *
- * Existing contract preserved.
+ * Expected mount:
+ * POST /api/identity/login
+ *
+ * The router must independently verify the Pi access token.
+ * Do not accept a browser-supplied Pi UID as proof of identity.
+ *
+ * This mount does not automatically migrate existing frontend
+ * login callers; that requires a separate frontend change.
  */
 app.use(
-  internalLiquidityGatewayRouter
+  "/api/identity",
+  mainnetIdentityGatewayRouter
 );
 
 
@@ -402,34 +331,6 @@ app.use(
    EXTERNAL PROJECT TRUSTED GATEWAY
 ========================================================= */
 
-/*
- * External Project security migration layer.
- *
- * IMPORTANT:
- *
- * This gateway is intentionally additive.
- *
- * It does NOT remove or revoke the existing applicant
- * Supabase RPC permissions at this stage.
- *
- * During migration:
- *
- * Browser
- *   ↓
- * Pi access token
- *   ↓
- * externalProjectGatewayRouter
- *   ↓
- * Pi Platform /v2/me verification
- *   ↓
- * trusted Pi UID
- *   ↓
- * existing applicant RPC
- *
- * This allows the frontend callers to migrate
- * incrementally without immediately breaking
- * existing pages.
- */
 app.use(
   "/api/external-project",
   externalProjectGatewayRouter
@@ -437,38 +338,68 @@ app.use(
 
 
 /* =========================================================
-   EXISTING MAINNET FINANCIAL GATEWAY
+   DAPP SERVICE V2 GATEWAY
 ========================================================= */
 
 /*
- * Existing Mainnet financial gateway.
+ * Disabled by default.
  *
- * Core financial path preserved unchanged.
+ * Enable only when:
+ * 1. DAPP_SERVICE_V2_ENABLED=true
+ * 2. The gateway's required environment variables are configured.
+ * 3. Its database schema and RLS policies are verified.
+ * 4. Consent, authentication, and request authorization are tested.
+ *
+ * This is the Mainnet API. Do not point its Supabase configuration
+ * at the Testnet project.
+ *
+ * Payment channels must remain disabled until payment handling
+ * has been separately reviewed and approved.
  */
-app.use(
-  financialGatewayRouter
-);
+const dappServiceV2Enabled =
+  String(process.env.DAPP_SERVICE_V2_ENABLED || "")
+    .trim()
+    .toLowerCase() === "true";
+
+if (dappServiceV2Enabled) {
+  const {
+    createDappServiceV2GatewayRouter
+  } = require("./src/dapp-service-v2-gateway");
+
+  app.use(
+    "/api/dapp-service/v2",
+    createDappServiceV2GatewayRouter()
+  );
+
+  console.log(
+    "[ALBUKHR API] DApp Service v2 gateway enabled."
+  );
+
+} else {
+  console.log(
+    "[ALBUKHR API] DApp Service v2 gateway disabled."
+  );
+}
+
+
+/* =========================================================
+   MAINNET FINANCIAL GATEWAY
+========================================================= */
+
+app.use(financialGatewayRouter);
 
 
 /* =========================================================
    LEGACY FINANCIAL UNAVAILABLE ROUTES
 ========================================================= */
 
-/*
- * Preserve existing unavailable financial routes.
- */
-for (
-  const route of [
-    "/approve",
-    "/complete",
-    "/withdraw",
-    "/pay-withdraw"
-  ]
-) {
-  app.post(
-    route,
-    api.financialUnavailable
-  );
+for (const route of [
+  "/approve",
+  "/complete",
+  "/withdraw",
+  "/pay-withdraw"
+]) {
+  app.post(route, api.financialUnavailable);
 }
 
 
@@ -476,13 +407,12 @@ for (
    404 HANDLER
 ========================================================= */
 
-app.use(
-  (req, res) =>
-    res.status(404).json({
-      success: false,
-      error: "Route not found.",
-      path: req.path
-    })
+app.use((req, res) =>
+  res.status(404).json({
+    success: false,
+    error: "Route not found.",
+    path: req.path
+  })
 );
 
 
@@ -490,132 +420,105 @@ app.use(
    GLOBAL ERROR HANDLER
 ========================================================= */
 
-app.use(
-  (
-    error,
-    _req,
-    res,
-    _next
-  ) => {
-
-    /*
-     * CORS rejection.
-     */
-    if (
-      error?.message ===
-      "Origin is not allowed."
-    ) {
-      return res.status(403).json({
-        success: false,
-        error:
-          "Origin is not allowed."
-      });
-    }
-
-
-    /*
-     * Preserve existing server error
-     * behavior for all other failures.
-     */
-    console.error(
-      "[ALBUKHR API] Unhandled error:",
-      error
-    );
-
-
-    return res.status(500).json({
+app.use((error, _req, res, _next) => {
+  if (error?.message === "Origin is not allowed.") {
+    return res.status(403).json({
       success: false,
-      error:
-        "Internal server error."
+      error: "Origin is not allowed."
     });
   }
-);
+
+  // Handle body-parser errors without exposing internal details.
+  if (error?.type === "entity.too.large") {
+    return res.status(413).json({
+      success: false,
+      error: "Request body is too large."
+    });
+  }
+
+  if (error?.type === "entity.parse.failed") {
+    return res.status(400).json({
+      success: false,
+      error: "Invalid JSON request body."
+    });
+  }
+
+  console.error(
+    "[ALBUKHR API] Unhandled error:",
+    error
+  );
+
+  return res.status(500).json({
+    success: false,
+    error: "Internal server error."
+  });
+});
 
 
 /* =========================================================
    SERVER START
 ========================================================= */
 
-const server = app.listen(
-  PORT,
-  HOST,
-  () =>
-    console.log(
-      `ALBUKHR MAINNET API v2.3.0 running on ${HOST}:${PORT}`
-    )
-);
+const server = app.listen(PORT, HOST, () => {
+  console.log(
+    `ALBUKHR MAINNET API v2.3.0 running on ${HOST}:${PORT}`
+  );
+});
 
 
 /* =========================================================
    PROCESS ERROR HANDLING
 ========================================================= */
 
-process.on(
-  "unhandledRejection",
-  (reason) =>
-    console.error(
-      "[ALBUKHR API] Unhandled promise rejection:",
-      reason
-  )
-);
+process.on("unhandledRejection", (reason) => {
+  console.error(
+    "[ALBUKHR API] Unhandled promise rejection:",
+    reason
+  );
+});
 
+process.on("uncaughtException", (error) => {
+  console.error(
+    "[ALBUKHR API] Uncaught exception:",
+    error
+  );
 
-process.on(
-  "uncaughtException",
-  (error) => {
-
-    console.error(
-      "[ALBUKHR API] Uncaught exception:",
-      error
-    );
-
-    server.close(
-      () =>
-        process.exit(1)
-    );
-  }
-);
+  server.close(() => {
+    process.exit(1);
+  });
+});
 
 
 /* =========================================================
    GRACEFUL SHUTDOWN
 ========================================================= */
 
+let shuttingDown = false;
+
 function shutdown(signal) {
+  if (shuttingDown) {
+    return;
+  }
+
+  shuttingDown = true;
 
   console.log(
     `[ALBUKHR API] ${signal} received. Shutting down...`
   );
 
+  server.close(() => {
+    console.log("[ALBUKHR API] Server closed.");
+    process.exit(0);
+  });
 
-  server.close(
-    () => {
+  setTimeout(() => {
+    console.error(
+      "[ALBUKHR API] Graceful shutdown timed out."
+    );
 
-      console.log(
-        "[ALBUKHR API] Server closed."
-      );
-
-      process.exit(0);
-    }
-  );
-
-
-  setTimeout(
-    () => process.exit(1),
-    10_000
-  ).unref();
+    process.exit(1);
+  }, 10_000).unref();
 }
 
-
-process.on(
-  "SIGTERM",
-  () =>
-    shutdown("SIGTERM")
-);
-
-
-process.on(
-  "SIGINT",
-  () =>
-    shutdown("SIGINT")
-);
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
