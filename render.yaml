@@ -12,11 +12,23 @@ services:
     autoDeployTrigger: commit
 
     envVars:
+      # =====================================================
+      # APPLICATION ENVIRONMENT
+      # =====================================================
+
       - key: NODE_ENV
         value: production
 
+      # =====================================================
+      # MAINNET PI PLATFORM
+      # =====================================================
+
       - key: PI_API_KEY
         sync: false
+
+      # =====================================================
+      # MAINNET SUPABASE
+      # =====================================================
 
       - key: SUPABASE_URL
         sync: false
@@ -24,27 +36,41 @@ services:
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
 
+      # =====================================================
+      # CORS
+      # Comma-separated list of approved frontend origins.
+      # =====================================================
+
       - key: ALLOWED_ORIGINS
         sync: false
 
-      # DApp Service v2 remains disabled until its
-      # database schema, RLS, and configuration are verified.
+      # =====================================================
+      # DAPP SERVICE V2
+      # Disabled until database schema, RLS, authorization,
+      # and request lifecycle have been verified.
+      # =====================================================
+
       - key: DAPP_SERVICE_V2_ENABLED
         value: "false"
 
-      # Configure these only after reviewing the gateway
-      # and confirming the correct Mainnet Supabase project.
+      # Dedicated DApp Service database configuration.
+      # Use the verified Mainnet Supabase project only.
+      # Never put a service-role key directly in this file.
       - key: DAPP_SERVICE_SUPABASE_URL
         sync: false
 
       - key: DAPP_SERVICE_SUPABASE_SERVICE_ROLE_KEY
         sync: false
 
+      # This API deployment serves Mainnet only.
       - key: DAPP_SERVICE_NETWORK
         value: mainnet
 
+      # The gateway appends /me to this base URL.
+      # Resulting identity endpoint: /v2/me
       - key: DAPP_SERVICE_PI_API_BASE
-        value: https://api.minepi.com
+        value: https://api.minepi.com/v2
 
+      # Must match the current service terms accepted by users.
       - key: DAPP_SERVICE_CONSENT_VERSION
         value: v1
