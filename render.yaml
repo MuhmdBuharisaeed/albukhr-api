@@ -1,3 +1,4 @@
+
 services:
   - type: web
     name: albukhr-api
@@ -25,3 +26,25 @@ services:
 
       - key: ALLOWED_ORIGINS
         sync: false
+
+      # DApp Service v2 remains disabled until its
+      # database schema, RLS, and configuration are verified.
+      - key: DAPP_SERVICE_V2_ENABLED
+        value: "false"
+
+      # Configure these only after reviewing the gateway
+      # and confirming the correct Mainnet Supabase project.
+      - key: DAPP_SERVICE_SUPABASE_URL
+        sync: false
+
+      - key: DAPP_SERVICE_SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+
+      - key: DAPP_SERVICE_NETWORK
+        value: mainnet
+
+      - key: DAPP_SERVICE_PI_API_BASE
+        value: https://api.minepi.com
+
+      - key: DAPP_SERVICE_CONSENT_VERSION
+        value: v1
