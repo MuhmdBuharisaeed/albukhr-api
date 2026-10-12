@@ -14,7 +14,6 @@ const API_VERSION = "2.3.0";
 // protected audit table written through the SECURITY DEFINER record_pi_login
 // RPC. A direct SELECT is not required to establish API health.
 const CORE_TABLES = ["projects", "users"];
-const PROTECTED_AUDIT_TABLES = ["login_events"];
 const LIQUIDITY_TABLES = [
   "project_treasury",
   "project_liquidity_payments",
@@ -169,7 +168,9 @@ async function restTableProbe(table) {
 
 async function runtimeRestDiagnostics() {
   const probes = [];
-  for (const table of [...CORE_TABLES, ...PROTECTED_AUDIT_TABLES, ...LIQUIDITY_TABLES]) {
+  // Do not issue REST SELECT probes against protected audit tables such as
+  // login_events. Their restricted grants are intentional and not a health failure.
+  for (const table of [...CORE_TABLES, ...LIQUIDITY_TABLES]) {
     probes.push(await restTableProbe(table));
   }
   return probes;
