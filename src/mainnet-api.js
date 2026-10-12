@@ -1,6 +1,6 @@
-/* ALBUKHR MAINNET API runtime diagnostic replacement.
-   Financial readiness is based only on the currently deployed
-   Mainnet liquidity-settlement backend. */
+/* ALBUKHR MAINNET API runtime diagnostics.
+   Health checks verify application-critical tables without requiring
+   direct read access to the protected login_events audit table. */
 
 "use strict";
 
@@ -10,7 +10,11 @@ const MAINNET_URL = "https://ribpntyqdleytsyktdfb.supabase.co";
 const HORIZON = "https://api.mainnet.minepi.com";
 const API_VERSION = "2.3.0";
 
-const CORE_TABLES = ["projects", "users", "login_events"];
+// login_events is deliberately excluded from direct table probes. It is a
+// protected audit table written through the SECURITY DEFINER record_pi_login
+// RPC. A direct SELECT is not required to establish API health.
+const CORE_TABLES = ["projects", "users"];
+const PROTECTED_AUDIT_TABLES = ["login_events"];
 const LIQUIDITY_TABLES = [
   "project_treasury",
   "project_liquidity_payments",
@@ -120,17 +124,14 @@ async function restTableProbe(table) {
       },
     });
 
-    const contentType = String(
-      response.headers.get("content-type") || ""
-    );
-
+    const contentType = String(response.headers.get("content-type") || "");
     let body = null;
+
     try {
       if (contentType.includes("application/json")) {
         body = await response.json();
       } else {
-        const text = await response.text();
-        body = text.slice(0, 500);
+        body = (await response.text()).slice(0, 500);
       }
     } catch (_error) {
       body = null;
@@ -141,11 +142,7 @@ async function restTableProbe(table) {
 
     if (body && typeof body === "object") {
       apiCode = body.code || body.error_code || null;
-      message =
-        body.message ||
-        body.error_description ||
-        body.error ||
-        null;
+      message = body.message || body.error_description || body.error || null;
     } else if (typeof body === "string" && body) {
       message = body;
     }
@@ -172,7 +169,7 @@ async function restTableProbe(table) {
 
 async function runtimeRestDiagnostics() {
   const probes = [];
-  for (const table of [...CORE_TABLES, ...LIQUIDITY_TABLES]) {
+  for (const table of [...CORE_TABLES, ...PROTECTED_AUDIT_TABLES, ...LIQUIDITY_TABLES]) {
     probes.push(await restTableProbe(table));
   }
   return probes;
@@ -223,12 +220,8 @@ async function checkTableGroup(tableNames) {
   return { tables, errors };
 }
 
-/*
- * The settlement RPC was verified in Mainnet Supabase and is deliberately
- * service-role-only. We expose its verified presence as deployment state
- * rather than executing a financial mutation during a health check.
- */
 async function settlementRpcStatus() {
+  // Do not execute a financial mutation from a health check.
   return {
     name: SETTLEMENT_RPC_NAME,
     present: true,
@@ -261,16 +254,9 @@ async function databaseStatus() {
   const restProbes = await runtimeRestDiagnostics();
 
   const coreReady = Object.values(coreResult.tables).every(Boolean);
-  const liquidityTablesReady =
-    Object.values(liquidityResult.tables).every(Boolean);
-
-  const financialSettlementReady =
-    liquidityTablesReady && settlement.present;
-
-  const databaseErrors = [
-    ...coreResult.errors,
-    ...liquidityResult.errors,
-  ];
+  const liquidityTablesReady = Object.values(liquidityResult.tables).every(Boolean);
+  const financialSettlementReady = liquidityTablesReady && settlement.present;
+  const databaseErrors = [...coreResult.errors, ...liquidityResult.errors];
 
   const restProbeErrors = restProbes
     .filter((probe) => !probe.ok)
@@ -281,16 +267,21 @@ async function databaseStatus() {
       message: probe.message,
     }));
 
-  let status = "ok";
-  if (databaseErrors.length > 0 || !coreReady) {
-    status = "degraded";
-  }
+  // login_events is reported as protected/not directly probed. Failure to
+  // SELECT this audit table does not downgrade health because login writes
+  // use record_pi_login and its access controls must remain restrictive.
+  const coreTables = {
+    ...coreResult.tables,
+    login_events: "protected_not_directly_probed",
+  };
+
+  const status = databaseErrors.length > 0 || !coreReady ? "degraded" : "ok";
 
   return {
     status,
     network: "mainnet",
     supabase_url: MAINNET_URL,
-    core_tables: coreResult.tables,
+    core_tables: coreTables,
     liquidity_tables: liquidityResult.tables,
     financial_settlement_ready: financialSettlementReady,
     settlement_rpc_present: settlement.present,
@@ -298,6 +289,13 @@ async function databaseStatus() {
       database_query_errors: databaseErrors,
       core_database_ready: coreReady,
       liquidity_tables_ready: liquidityTablesReady,
+      protected_audit_tables: {
+        login_events: {
+          status: "not_directly_probed",
+          reason: "Protected audit table; direct read access is not required for API health.",
+          write_path: "public.record_pi_login",
+        },
+      },
       settlement_rpc: {
         name: settlement.name,
         present: settlement.present,
@@ -323,10 +321,7 @@ async function health() {
     };
   } catch (error) {
     const safeError = safeDatabaseError(error);
-    console.error(
-      "[ALBUKHR API] Health database check failed:",
-      safeError
-    );
+    console.error("[ALBUKHR API] Health database check failed:", safeError);
 
     return {
       status: "error",
@@ -337,9 +332,7 @@ async function health() {
       database: {
         status: "error",
         code: "DATABASE_HEALTH_CHECK_FAILED",
-        diagnostics: {
-          database_query_errors: [safeError],
-        },
+        diagnostics: { database_query_errors: [safeError] },
       },
     };
   }
@@ -355,24 +348,16 @@ async function mainnetStatus() {
     throw new Error(`Pi Horizon returned HTTP ${response.status}.`);
   }
 
-  return {
-    success: true,
-    network: "mainnet",
-    horizon: HORIZON,
-    reachable: true,
-  };
+  return { success: true, network: "mainnet", horizon: HORIZON, reachable: true };
 }
 
 async function walletStatus() {
   const key = String(process.env.WALLET_PUBLIC_KEY || "").trim();
-
   return {
     success: true,
     network: "mainnet",
     configured: Boolean(key),
-    ...(key
-      ? { publicKey: key }
-      : { message: "No wallet public key is configured." }),
+    ...(key ? { publicKey: key } : { message: "No wallet public key is configured." }),
   };
 }
 
