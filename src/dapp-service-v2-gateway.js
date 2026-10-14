@@ -3,6 +3,7 @@
 
 const express = require("express");
 const { createClient } = require("@supabase/supabase-js");
+const { mountDappProjectPathway } = require("./dapp-service-project-pathway");
 
 const MAIN = "https://ribpntyqdleytsyktdfb.supabase.co";
 const PI = "https://api.minepi.com/v2";
@@ -127,6 +128,23 @@ function createDappServiceV2GatewayRouter(options = {}) {
     });
 
   const r = express.Router();
+
+  /*
+   * Additive Internal/External project pathway.
+   * Existing Pi Studio, Developer-built dApp, payment and Admin routes remain.
+   * Core projects are intentionally excluded by the pathway module.
+   */
+  mountDappProjectPathway({
+    router: r,
+    db,
+    pioneer,
+    fail,
+    noStore,
+    clean,
+    obj,
+    UUID,
+    consent: c.consent
+  });
 
   async function pioneer(req, res) {
     const t = token(req);
@@ -406,7 +424,11 @@ function createDappServiceV2GatewayRouter(options = {}) {
       },
       services: [
         { id: "pi_studio", title: "Pi Studio Assistance" },
-        { id: "developer", title: "Developer-built dApp" }
+        { id: "developer", title: "Developer-built dApp" },
+        {
+          id: "albukhr_project",
+          title: "Build an App for My ALBUKHR Project"
+        }
       ]
     });
   });
@@ -476,7 +498,7 @@ function createDappServiceV2GatewayRouter(options = {}) {
     const z = await db
       .from("dapp_service_requests")
       .select(
-        "id,network,project_name,service_type,description,request_status,payment_status,created_at,updated_at"
+        "id,network,project_name,service_type,description,request_status,payment_status,project_id,project_type,project_relationship,project_relationship_verified_at,created_at,updated_at"
       )
       .eq("network", "mainnet")
       .eq("applicant_pi_uid", u.uid)
@@ -860,7 +882,7 @@ function createDappServiceV2GatewayRouter(options = {}) {
     let b = db
       .from("dapp_service_requests")
       .select(
-        "id,network,applicant_pi_uid,pi_username,project_name,service_type,description,consent_version,request_status,payment_status,created_at,updated_at"
+        "id,network,applicant_pi_uid,pi_username,project_name,service_type,description,consent_version,request_status,payment_status,project_id,project_type,project_relationship,project_relationship_verified_at,project_owner_albukhr_user_id,created_at,updated_at"
       )
       .eq("network", "mainnet")
       .order("created_at", { ascending: false })
@@ -895,7 +917,7 @@ function createDappServiceV2GatewayRouter(options = {}) {
     const a = await db
       .from("dapp_service_requests")
       .select(
-        "id,network,applicant_pi_uid,pi_username,project_name,service_type,description,consent_version,request_status,payment_status,created_at,updated_at"
+        "id,network,applicant_pi_uid,pi_username,project_name,service_type,description,consent_version,request_status,payment_status,project_id,project_type,project_relationship,project_relationship_verified_at,project_owner_albukhr_user_id,created_at,updated_at"
       )
       .eq("network", "mainnet")
       .eq("id", id)
