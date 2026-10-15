@@ -49,6 +49,14 @@ function duration(value) {
   return days;
 }
 
+function uuidValue(value, field) {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(text)) {
+    throw httpError(400, `${field} is invalid.`);
+  }
+  return text;
+}
+
 function requireBearer(req) {
   const header = String(req.headers.authorization || "").trim();
   if (!header.toLowerCase().startsWith("bearer ")) {
@@ -119,6 +127,31 @@ async function getInternalTreasury(projectId) {
   return data;
 }
 
+async function requirePublishedInternalTerm({ project, durationDays, termVersionId }) {
+  const { data, error } = await supabase
+    .from("project_staking_term_versions")
+    .select("id,project_id,project_code,network,duration_days,term_status,version_number,effective_from,effective_until")
+    .eq("id", termVersionId)
+    .eq("project_id", project.id)
+    .eq("project_code", project.project_code)
+    .eq("network", MAINNET)
+    .eq("duration_days", durationDays)
+    .eq("term_status", "published")
+    .maybeSingle();
+
+  if (error) throw httpError(502, "Published Internal investment term lookup failed.");
+  if (!data) throw httpError(403, "The accepted term version is not published for this Internal Project and duration.");
+
+  const now = Date.now();
+  const effectiveFrom = Date.parse(data.effective_from || "");
+  const effectiveUntil = data.effective_until ? Date.parse(data.effective_until) : null;
+  if (!Number.isFinite(effectiveFrom) || effectiveFrom > now ||
+      (effectiveUntil !== null && (!Number.isFinite(effectiveUntil) || effectiveUntil <= now))) {
+    throw httpError(403, "The accepted Internal investment term version is not currently effective.");
+  }
+  return data;
+}
+
 function verifyInternalPayment(payment, expected) {
   return verifyU2APaymentDTO(payment, {
     ...expected,
@@ -135,8 +168,10 @@ router.post("/api/internal-payment-approve", async (req, res) => {
     const paymentId = clean(b.payment_id, "payment_id", 200);
     const amount = positiveAmount(b.amount);
     const durationDays = duration(b.duration);
+    const termVersionId = uuidValue(b.term_version_id, "term_version_id");
 
     const project = await getInternalProject(projectCode, { requireActive: true });
+    await requirePublishedInternalTerm({ project, durationDays, termVersionId });
     const treasury = await getInternalTreasury(project.id);
     const payment = await getPayment(paymentId);
 
@@ -147,6 +182,7 @@ router.post("/api/internal-payment-approve", async (req, res) => {
       piUid: identity.pi_uid,
       amount,
       durationDays,
+      termVersionId,
       requireRecipient: false
     });
 
@@ -181,8 +217,10 @@ router.post("/api/internal-payment-complete", async (req, res) => {
     const txid = clean(b.txid, "txid", 300);
     const amount = positiveAmount(b.amount);
     const durationDays = duration(b.duration);
+    const termVersionId = uuidValue(b.term_version_id, "term_version_id");
 
     const project = await getInternalProject(projectCode, { requireActive: true });
+    await requirePublishedInternalTerm({ project, durationDays, termVersionId });
     const treasury = await getInternalTreasury(project.id);
     const expected = {
       paymentId,
@@ -190,7 +228,8 @@ router.post("/api/internal-payment-complete", async (req, res) => {
       treasuryWallet: treasury.treasury_wallet,
       piUid: identity.pi_uid,
       amount,
-      durationDays
+      durationDays,
+      termVersionId
     };
 
     const before = await getPayment(paymentId);
@@ -233,6 +272,7 @@ router.post("/api/internal-payment-complete", async (req, res) => {
         engine: "CONTRIBUTOR_INTERNAL_V1",
         project_code: projectCode,
         duration_days: durationDays,
+        term_version_id: termVersionId,
         transaction_id: transactionId
       }
     });
