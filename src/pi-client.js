@@ -176,6 +176,15 @@ function verifyU2APaymentDTO(payment, expected = {}) {
     paymentValidationError(403, "Pi payment duration does not match the requested duration.");
   }
 
+  // Bind the accepted, published contract version to the immutable Pi payment.
+  // Investment routes must provide an authoritative version ID; missing or
+  // mismatched metadata is rejected rather than settling at the latest term.
+  const paymentTermVersionId = normalize(metadata.term_version_id).toLowerCase();
+  const expectedTermVersionId = normalize(expected.termVersionId).toLowerCase();
+  if (!paymentTermVersionId || !expectedTermVersionId || paymentTermVersionId !== expectedTermVersionId) {
+    paymentValidationError(403, "Pi payment staking term version does not match the accepted contract.");
+  }
+
   const status = payment.status;
   if (!status || typeof status !== "object" || Array.isArray(status)) {
     paymentValidationError(502, "Pi payment status flags are missing or invalid.");
@@ -246,6 +255,7 @@ function verifyPaymentMetadata(payment, metadata = {}) {
     network: metadata.network,
     projectCode: metadata.project_code,
     durationDays: metadata.duration,
+    termVersionId: metadata.term_version_id,
     action: metadata.action || "add_liquidity",
     treasuryWallet: metadata.treasury_wallet,
     requireRecipient: metadata.require_recipient === true,
