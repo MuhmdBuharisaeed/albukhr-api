@@ -1,6 +1,7 @@
 /* ALBUKHR Mainnet Core Financial Gateway
  * Full replacement — strict U2A payment verification and immutable term binding.
  * Existing withdrawal routes are retained; A2U payout execution delegates to the guarded shared service.
+ * Review candidate: adds an authenticated, Mainnet-only withdrawal-history read route.
  */
 "use strict";
 
@@ -297,6 +298,51 @@ router.get("/api/my-stakes", async (req, res) => {
   } catch (error) {
     const status = Number(error?.status) || 500;
     return res.status(status).json({ success: false, error: status >= 500 ? "Unable to load stakes." : error.message });
+  }
+});
+
+/* Authenticated, Mainnet-only read of the signed-in pioneer's withdrawal history.
+   Pi UID is derived from the verified Pi access token, never from request parameters.
+   Return an allowlisted shape rather than the full withdrawal_requests row. */
+router.get("/api/my-withdrawals", async (req, res) => {
+  try {
+    const identity = await verifiedPiIdentity(req);
+    const network = String(req.query.network || MAINNET).toLowerCase();
+    if (network !== MAINNET) throw httpError(403, "Only Mainnet withdrawal history is available.");
+
+    const { data, error } = await supabase.rpc("get_my_withdrawal_requests", {
+      p_pi_uid: identity.pi_uid,
+      p_network: MAINNET
+    });
+    if (error) {
+      console.error("[ALBUKHR API] Withdrawal history RPC failed", { code: error.code, message: error.message });
+      throw httpError(502, "Unable to load Mainnet withdrawal history.");
+    }
+
+    const rows = (Array.isArray(data) ? data : []).map((row) => ({
+      id: row.id,
+      stake_id: row.stake_id,
+      project_code: row.project_code,
+      network: row.network,
+      withdrawal_type: row.withdrawal_type,
+      requested_amount: row.requested_amount,
+      fee_rate: row.fee_rate,
+      fee_amount: row.fee_amount,
+      net_amount: row.net_amount,
+      status: row.status,
+      txid: row.txid,
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    }));
+
+    return res.status(200).json({ success: true, data: rows });
+  } catch (error) {
+    const status = Number(error?.status) || 500;
+    if (status >= 500) console.error("[ALBUKHR API] Withdrawal history error", { status, message: error?.message });
+    return res.status(status).json({
+      success: false,
+      error: status >= 500 ? "Unable to load withdrawal history." : error.message
+    });
   }
 });
 
