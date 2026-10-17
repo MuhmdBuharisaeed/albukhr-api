@@ -1,11 +1,12 @@
 /* ALBUKHR Mainnet Core Financial Gateway
  * Full replacement — strict U2A payment verification and immutable term binding.
- * Existing withdrawal and A2U payout routes are retained.
+ * Existing withdrawal routes are retained; A2U payout execution delegates to the guarded shared service.
  */
 "use strict";
 
 const express = require("express");
 const { supabase } = require("./supabase-client");
+const { a2uReconciliationRouter } = require("./a2u-reconciliation-router");
 const {
   getPayment,
   approvePayment,
@@ -13,20 +14,14 @@ const {
   getPioneer,
   verifyU2APaymentDTO
 } = require("./pi-client");
-const {
-  createA2UPayment,
-  getA2UPayment,
-  getIncompleteA2UPayments,
-  submitA2UPayment,
-  completeA2UPayment
-} = require("./pi-a2u-client");
+const { executeWithdrawalPayout: executeSharedA2UPayout } = require("./a2u-payout-service");
 
 const router = express.Router();
+router.use(a2uReconciliationRouter);
 const MAINNET = "mainnet";
 const CORE_ACTION = "core_investment";
 const WITHDRAWAL_FEE_RATE = 0.01;
 const MIN_WITHDRAWAL_PI = 1;
-const activePayouts = new Set();
 
 function httpError(status, message) {
   const error = new Error(message);
@@ -171,178 +166,6 @@ function verifyCorePayment(payment, expected) {
     network: MAINNET,
     action: CORE_ACTION
   });
-}
-
-function paymentStatus(payment) {
-  const status = payment?.status;
-  if (status && typeof status === "object") {
-    if (status.cancelled || status.user_cancelled) return "cancelled";
-    if (status.developer_completed) return "completed";
-    if (status.developer_approved) return "approved";
-    return "pending";
-  }
-  return String(status || payment?.transaction?.status || "").trim().toLowerCase();
-}
-
-/*
- * A2U payout execution. Input is only withdrawal_request_id; the request's
- * amount, Pi UID, wallet, and status are read from authoritative Mainnet rows.
- */
-async function executeWithdrawalPayout(withdrawalRequestId) {
-  const id = clean(withdrawalRequestId, "withdrawal_request_id", 100);
-  if (activePayouts.has(id)) throw httpError(409, "This withdrawal payout is already being processed.");
-  activePayouts.add(id);
-
-  try {
-    const { data: request, error } = await supabase
-      .from("withdrawal_requests")
-      .select("id,stake_id,user_id,pi_uid,project_id,project_code,network,withdrawal_type,requested_amount,fee_rate,fee_amount,net_amount,wallet_address,status,txid,reviewed_by,reviewed_at,rejection_reason,created_at,updated_at")
-      .eq("id", id)
-      .maybeSingle();
-
-    if (error) throw httpError(502, "Withdrawal request lookup failed.");
-    if (!request) throw httpError(404, "Withdrawal request was not found.");
-
-    const requestStatus = String(request.status || "").toLowerCase();
-    if (requestStatus === "paid" && request.txid) {
-      return {
-        already_paid: true,
-        withdrawal_request_id: id,
-        status: "paid",
-        txid: request.txid,
-        wallet_receive: Number(request.net_amount ?? request.requested_amount)
-      };
-    }
-    if (requestStatus !== "approved") {
-      throw httpError(409, `Withdrawal request is not approved (status: ${requestStatus || "unknown"}).`);
-    }
-    if (String(request.network || "").toLowerCase() !== MAINNET) {
-      throw httpError(403, "Only Mainnet withdrawal requests can be paid.");
-    }
-
-    const piUid = clean(request.pi_uid, "pi_uid", 200);
-    const recipient = clean(request.wallet_address, "wallet_address", 200);
-    const requestedAmount = positiveAmount(request.requested_amount);
-    const walletReceive = Number(request.net_amount ?? request.requested_amount);
-    const feeRate = Number(request.fee_rate ?? WITHDRAWAL_FEE_RATE);
-    const feeAmount = Number(request.fee_amount ?? requestedAmount * feeRate);
-    const totalDeduction = Number((requestedAmount + feeAmount).toFixed(3));
-
-    if (!Number.isFinite(walletReceive) || walletReceive <= 0 || walletReceive !== requestedAmount) {
-      throw httpError(409, "Withdrawal amount contract is invalid.");
-    }
-    if (Math.abs(feeRate - WITHDRAWAL_FEE_RATE) > 1e-9) {
-      throw httpError(409, "Withdrawal fee contract is invalid.");
-    }
-    if (!Number.isFinite(feeAmount) || feeAmount < 0) {
-      throw httpError(409, "Withdrawal fee amount is invalid.");
-    }
-    if (Math.abs(totalDeduction - Number(requestedAmount + feeAmount)) > 1e-9) {
-      throw httpError(409, "Withdrawal total deduction is invalid.");
-    }
-
-    const { data: stake, error: stakeError } = await supabase
-      .from("stakes")
-      .select("id,project_id,project_code,user_id,pi_uid,network,amount,duration_days,reward_rate,reward_amount,status,payment_record_id,payment_id,start_at,unlock_at,core_investment_payment_id,internal_investment_payment_id")
-      .eq("id", request.stake_id)
-      .maybeSingle();
-
-    if (stakeError) throw httpError(502, "Stake lookup failed.");
-    if (!stake) throw httpError(409, "Referenced stake was not found.");
-    if (String(stake.network || "").toLowerCase() !== MAINNET) throw httpError(403, "Referenced stake is not Mainnet.");
-    if (String(stake.pi_uid || "") !== piUid) throw httpError(403, "Withdrawal Pi identity does not match the stake.");
-    if (String(stake.project_id || "") !== String(request.project_id || "")) throw httpError(409, "Withdrawal project does not match the stake.");
-
-    const StellarSdk = require("stellar-sdk");
-    if (!StellarSdk.StrKey.isValidEd25519PublicKey(recipient)) {
-      throw httpError(400, "Withdrawal wallet address is not a valid Pi public key.");
-    }
-
-    const memo = `ALBUKHR-WD:${id}`;
-    let a2uPayment = null;
-    const incomplete = await getIncompleteA2UPayments();
-    const recovered = incomplete.find(item => String(item?.metadata?.withdrawal_request_id || "") === id);
-
-    if (recovered?.identifier) {
-      a2uPayment = { payment: recovered, payment_id: String(recovered.identifier) };
-    } else {
-      a2uPayment = await createA2UPayment({
-        uid: piUid,
-        amount: requestedAmount,
-        memo,
-        metadata: {
-          source: "albukhr-api",
-          network: MAINNET,
-          withdrawal_request_id: id,
-          project_code: String(request.project_code || ""),
-          withdrawal_type: String(request.withdrawal_type || ""),
-          requested_amount: requestedAmount,
-          fee_amount: feeAmount,
-          total_deduction: totalDeduction,
-          wallet_receive: walletReceive
-        }
-      });
-    }
-
-    const paymentId = clean(a2uPayment.payment_id, "A2U payment_id", 200);
-    let paymentState = await getA2UPayment(paymentId);
-    const existingTxid = String(paymentState?.transaction?.txid || paymentState?.transaction?.id || paymentState?.txid || "").trim();
-    const existingStatus = paymentStatus(paymentState);
-    let txid = existingTxid;
-
-    if (!txid && existingStatus !== "completed") {
-      const submitted = await submitA2UPayment(paymentId, recipient, requestedAmount);
-      txid = clean(submitted.txid, "Pi transaction id", 300);
-    }
-    if (!txid) throw httpError(502, "Pi payout transaction was not confirmed with a transaction id.");
-    if (existingStatus !== "completed") await completeA2UPayment(paymentId, txid);
-
-    paymentState = await getA2UPayment(paymentId);
-    const finalStatus = paymentStatus(paymentState);
-    const confirmedTxid = String(paymentState?.transaction?.txid || paymentState?.transaction?.id || paymentState?.txid || txid).trim();
-    if (finalStatus !== "completed") throw httpError(502, "Pi A2U payment was not confirmed as completed.");
-    if (!confirmedTxid) throw httpError(502, "Completed Pi A2U payment has no transaction id.");
-
-    const { data: paidRow, error: paidError } = await supabase
-      .from("withdrawal_requests")
-      .update({ status: "paid", txid: confirmedTxid, updated_at: new Date().toISOString() })
-      .eq("id", id)
-      .eq("status", "approved")
-      .select("id,status,txid,requested_amount,fee_amount,net_amount")
-      .maybeSingle();
-
-    if (paidError) throw httpError(502, "Withdrawal paid-state update failed.");
-    if (!paidRow) {
-      const { data: current } = await supabase
-        .from("withdrawal_requests")
-        .select("id,status,txid,requested_amount,fee_amount,net_amount")
-        .eq("id", id)
-        .maybeSingle();
-      if (String(current?.status || "").toLowerCase() === "paid" && current?.txid) {
-        return {
-          already_paid: true,
-          withdrawal_request_id: id,
-          status: "paid",
-          txid: current.txid,
-          wallet_receive: Number(current.net_amount ?? current.requested_amount)
-        };
-      }
-      throw httpError(409, "Withdrawal state changed before payout completion.");
-    }
-
-    return {
-      already_paid: false,
-      withdrawal_request_id: id,
-      status: "paid",
-      txid: confirmedTxid,
-      payment_id: paymentId,
-      wallet_receive: walletReceive,
-      fee_amount: feeAmount,
-      total_deduction: totalDeduction
-    };
-  } finally {
-    activePayouts.delete(id);
-  }
 }
 
 router.post("/api/pi-payment-approve", async (req, res) => {
@@ -525,7 +348,7 @@ router.post("/api/pay-withdrawal", async (req, res) => {
   try {
     const b = body(req);
     const withdrawalRequestId = clean(b.withdrawal_request_id || b.id, "withdrawal_request_id", 100);
-    const result = await executeWithdrawalPayout(withdrawalRequestId);
+    const result = await executeSharedA2UPayout(withdrawalRequestId);
     return res.status(result.already_paid ? 200 : 201).json({ success: true, network: MAINNET, data: result });
   } catch (error) {
     const status = Number(error?.status) || 500;
@@ -539,4 +362,4 @@ router.post("/api/pay-withdrawal", async (req, res) => {
   }
 });
 
-module.exports = { financialGatewayRouter: router, executeWithdrawalPayout };
+module.exports = { financialGatewayRouter: router, executeWithdrawalPayout: executeSharedA2UPayout };
