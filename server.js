@@ -14,6 +14,7 @@ const rateLimit = require("express-rate-limit");
 
 const { createMainnetApi } = require("./src/mainnet-api");
 const { financialGatewayRouter } = require("./src/financial-gateway");
+const { walletGatewayRouter } = require("./src/wallet-gateway");
 const { contributorGatewayRouter } = require("./src/contributor-gateway");
 
 const {
@@ -386,8 +387,10 @@ if (dappServiceV2Enabled) {
    MAINNET FINANCIAL GATEWAY
 ========================================================= */
 
-app.use(financialGatewayRouter);
+/* Additive, read-only Wallet snapshot route. */
+app.use(walletGatewayRouter);
 
+app.use(financialGatewayRouter);
 
 /* =========================================================
    LEGACY FINANCIAL UNAVAILABLE ROUTES
