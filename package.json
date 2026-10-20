@@ -1,23 +1,23 @@
-
 {
-  "name": "albukhr-api",
-  "version": "2.3.0",
-  "private": true,
-  "description": "ALBUKHR Mainnet API and trusted service gateways",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js",
-    "check": "node --check server.js && node --check src/mainnet-api.js && node --check src/financial-gateway.js && node --check src/pi-client.js && node --check src/supabase-client.js && node --check src/contributor-gateway.js && node --check src/internal-investment-gateway.js && node --check src/internal-liquidity-gateway.js && node --check src/internal-funding-gateway.js && node --check src/external-project-gateway.js && node --check src/mainnet-identity-gateway.js && node --check src/dapp-service-v2-gateway.js"
-  },
-  "engines": {
-    "node": ">=20 <25"
-  },
-  "dependencies": {
-    "@supabase/supabase-js": "^2.50.0",
-    "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "express-rate-limit": "^7.5.0",
-    "helmet": "^8.1.0",
-    "stellar-sdk": "^13.3.0"
-  }
+"name": "albukhr-api",
+"version": "2.3.0",
+"private": true,
+"description": "ALBUKHR Mainnet API and trusted service gateways",
+"main": "server.js",
+"scripts": {
+"start": "node server.js",
+"check": "node --check server.js && node --check src/mainnet-api.js && node --check src/financial-gateway.js && node --check src/pi-client.js && node --check src/supabase-client.js && node --check src/contributor-gateway.js && node --check src/internal-investment-gateway.js && node --check src/internal-liquidity-gateway.js && node --check src/internal-funding-gateway.js && node --check src/external-project-gateway.js && node --check src/mainnet-identity-gateway.js && node --check src/dapp-service-v2-gateway.js && node --check src/wallet-gateway.js && node --check src/wallet-balance-service.js",
+"test:wallet": "node --test test/wallet-balance-service.test.js"
+},
+"engines": {
+"node": ">=20 <25"
+},
+"dependencies": {
+"@supabase/supabase-js": "^2.50.0",
+"cors": "^2.8.5",
+"express": "^4.18.2",
+"express-rate-limit": "^7.5.0",
+"helmet": "^8.1.0",
+"stellar-sdk": "^13.3.0"
+}
 }
