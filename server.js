@@ -71,42 +71,78 @@ app.use(
   })
 );
 
+
 app.use(
-  cors({
-    origin(origin, callback) {
-      // Preserve server-to-server requests without Origin.
-      if (!origin) {
-        return callback(null, true);
-      }
+  cors((req, callback) => {
+    const origin = String(req.get("Origin") || "");
+    const path = String(req.path || "");
 
-      // Preserve existing behavior when no allowlist is configured.
-      if (allowedOrigins.length === 0) {
-        return callback(null, true);
-      }
+    const isAdminSession =
+      path === "/api/admin/session" ||
+      path.startsWith("/api/admin/session/");
 
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+    const adminOrigin = String(
+      process.env.ALBUKHR_ADMIN_SESSION_ORIGIN || ""
+    ).trim();
 
+    const isAllowedAdminOrigin =
+      isAdminSession &&
+      Boolean(adminOrigin) &&
+      origin === adminOrigin;
+
+    // Preserve the existing ALLOWED_ORIGINS behavior.
+    const isExistingAllowedOrigin =
+      allowedOrigins.length === 0 ||
+      allowedOrigins.includes(origin);
+
+    // Preserve server-to-server requests without an Origin header.
+    if (!origin) {
+      return callback(null, {
+        origin: true,
+        credentials: false,
+        methods: [
+          "GET",
+          "POST",
+          "PATCH",
+          "PUT",
+          "DELETE",
+          "OPTIONS"
+        ],
+        allowedHeaders: [
+          "Content-Type",
+          "Authorization",
+          "X-API-Key"
+        ],
+        preflightContinue: false,
+        optionsSuccessStatus: 204
+      });
+    }
+
+    // Keep rejecting origins that are not allowed by either policy.
+    if (!isAllowedAdminOrigin && !isExistingAllowedOrigin) {
       return callback(new Error("Origin is not allowed."));
-    },
+    }
 
-    methods: [
-      "GET",
-      "POST",
-      "PATCH",
-      "PUT",
-      "DELETE",
-      "OPTIONS"
-    ],
-
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "X-API-Key"
-    ],
-
-    credentials: false
+    return callback(null, {
+      // Reflect the exact request Origin; never use "*".
+      origin: true,
+      credentials: isAllowedAdminOrigin,
+      methods: [
+        "GET",
+        "POST",
+        "PATCH",
+        "PUT",
+        "DELETE",
+        "OPTIONS"
+      ],
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "X-API-Key"
+      ],
+      preflightContinue: false,
+      optionsSuccessStatus: 204
+    });
   })
 );
 
