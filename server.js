@@ -15,6 +15,9 @@ const rateLimit = require("express-rate-limit");
 const { createMainnetApi } = require("./src/mainnet-api");
 const { financialGatewayRouter } = require("./src/financial-gateway");
 const { walletGatewayRouter } = require("./src/wallet-gateway");
+const {
+  contributorApplicationGatewayRouter
+} = require("./src/contributor-application-gateway");
 const { contributorGatewayRouter } = require("./src/contributor-gateway");
 
 const {
