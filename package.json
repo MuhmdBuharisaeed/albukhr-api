@@ -6,7 +6,7 @@
 "main": "server.js",
 "scripts": {
 "start": "node server.js",
-"check": "node --check server.js && node --check src/mainnet-api.js && node --check src/financial-gateway.js && node --check src/pi-client.js && node --check src/supabase-client.js && node --check src/contributor-gateway.js && node --check src/internal-investment-gateway.js && node --check src/internal-liquidity-gateway.js && node --check src/internal-funding-gateway.js && node --check src/external-project-gateway.js && node --check src/mainnet-identity-gateway.js && node --check src/dapp-service-v2-gateway.js && node --check src/wallet-gateway.js && node --check src/wallet-balance-service.js",
+"check": "node --check server.js && node --check src/mainnet-api.js && node --check src/financial-gateway.js && node --check src/pi-client.js && node --check src/supabase-client.js && node --check src/contributor-application-gateway.js && node --check src/contributor-gateway.js && node --check src/internal-investment-gateway.js && node --check src/internal-liquidity-gateway.js && node --check src/internal-funding-gateway.js && node --check src/external-project-gateway.js && node --check src/mainnet-identity-gateway.js && node --check src/dapp-service-v2-gateway.js && node --check src/wallet-gateway.js && node --check src/wallet-balance-service.js",
 "test:wallet": "node --test test/wallet-balance-service.test.js"
 },
 "engines": {
