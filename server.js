@@ -318,7 +318,24 @@ app.get(
 
 
 /* =========================================================
-   CONTRIBUTOR GATEWAY
+   CONTRIBUTOR APPLICATION FORM ONE
+   + INVITATION IDENTITY GUARD
+========================================================= */
+
+/*
+ * Important ordering:
+ * - Mount Form One routes.
+ * - Check the verified Pi identity against application-bound
+ *   invitations before the legacy onboarding handlers run.
+ * - Keep the existing Contributor gateway unchanged.
+ *
+ * Do not move contributorGatewayRouter above this router.
+ */
+app.use(contributorApplicationGatewayRouter);
+
+
+/* =========================================================
+   EXISTING CONTRIBUTOR GATEWAY
 ========================================================= */
 
 app.use(contributorGatewayRouter);
