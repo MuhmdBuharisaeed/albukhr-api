@@ -1,4 +1,3 @@
-
 /* ALBUKHR API — Mainnet Financial + Contributor + Internal Funding
  * + Internal Investment + Internal Liquidity + External Project
  * + Mainnet Identity + DApp Service v2
@@ -35,6 +34,10 @@ const {
 const {
   externalProjectGatewayRouter
 } = require("./src/external-project-gateway");
+
+const {
+  externalProjectFundingGatewayRouter
+} = require("./src/external-project-funding-gateway");
 
 const {
   mainnetIdentityGatewayRouter
@@ -391,6 +394,21 @@ app.use(
 app.use(
   "/api/external-project",
   externalProjectGatewayRouter
+);
+
+
+/* =========================================================
+   EXTERNAL PROJECT OWNER FUNDING GATEWAY
+========================================================= */
+
+/*
+ * Additive router mounted after the existing External Project routes.
+ * Its three-segment funding paths do not collide with the existing
+ * application detail, logo, team, document, review, or audit paths.
+ */
+app.use(
+  "/api/external-project",
+  externalProjectFundingGatewayRouter
 );
 
 
