@@ -117,7 +117,8 @@ app.use(
         allowedHeaders: [
           "Content-Type",
           "Authorization",
-          "X-API-Key"
+          "X-API-Key",
+          "X-File-Name"
         ],
         preflightContinue: false,
         optionsSuccessStatus: 204
@@ -144,7 +145,8 @@ app.use(
       allowedHeaders: [
         "Content-Type",
         "Authorization",
-        "X-API-Key"
+        "X-API-Key",
+        "X-File-Name"
       ],
       preflightContinue: false,
       optionsSuccessStatus: 204
@@ -164,6 +166,21 @@ app.use(
   express.raw({
     type: () => true,
     limit: "2mb"
+  })
+);
+
+
+/* =========================================================
+   EXTERNAL PROJECT OWNER OPERATIONS EVIDENCE RAW BODY
+========================================================= */
+
+// Evidence uploads are binary request bodies. Register this before
+// express.json() so the evidence buffer is not parsed as JSON.
+app.use(
+  "/api/external-project-owner-operations/:applicationId/updates/:updateId/evidence",
+  express.raw({
+    type: () => true,
+    limit: "10mb"
   })
 );
 
@@ -413,6 +430,38 @@ app.use(
 
 
 /* =========================================================
+   EXTERNAL PROJECT OWNER OPERATIONS GATEWAY
+========================================================= */
+
+// Disabled by default. Enable only after the required Mainnet schema,
+// RPC signatures, and end-to-end acceptance tests have been verified.
+const externalProjectOwnerOperationsEnabled =
+  String(process.env.EXTERNAL_PROJECT_OWNER_OPERATIONS_ENABLED || "")
+    .trim()
+    .toLowerCase() === "true";
+
+if (externalProjectOwnerOperationsEnabled) {
+  const {
+    externalProjectOwnerOperationsGatewayRouter
+  } = require("./src/external-project-owner-operations-gateway");
+
+  app.use(
+    "/api/external-project-owner-operations",
+    externalProjectOwnerOperationsGatewayRouter
+  );
+
+  console.log(
+    "[ALBUKHR API] External Project Owner Operations gateway enabled."
+  );
+
+} else {
+  console.log(
+    "[ALBUKHR API] External Project Owner Operations gateway disabled."
+  );
+}
+
+
+/* =========================================================
    DAPP SERVICE V2 GATEWAY
 ========================================================= */
 
@@ -465,6 +514,7 @@ if (dappServiceV2Enabled) {
 app.use(walletGatewayRouter);
 
 app.use(financialGatewayRouter);
+
 
 /* =========================================================
    LEGACY FINANCIAL UNAVAILABLE ROUTES
