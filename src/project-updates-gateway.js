@@ -40,6 +40,28 @@ function normalizeRpcResult(data) {
   return data == null ? null : data;
 }
 
+// Extract only a bearer credential. The credential is verified below by the
+// selected identity provider; this helper never treats its contents as identity.
+function requireBearer(req) {
+  const header = clean(req && req.headers && req.headers.authorization);
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  const token = match ? clean(match[1]) : '';
+  if (!token) {
+    throw httpError(401, "A valid Authorization Bearer token is required.", "AUTH_TOKEN_REQUIRED");
+  }
+  return token;
+}
+
+// Express JSON bodies must be plain objects. Ignore arrays, buffers and other
+// caller-controlled shapes so route validators receive a predictable value.
+function requestBody(req) {
+  const body = req && req.body;
+  if (!body || typeof body !== "object" || Array.isArray(body) || Buffer.isBuffer(body)) {
+    return {};
+  }
+  return body;
+}
+
 function createProjectUpdatesGatewayRouter(dependencies = {}) {
   const router = express.Router();
   const pioneerLookup = typeof dependencies.getPioneer === "function" ? dependencies.getPioneer : getPioneer;
@@ -51,6 +73,37 @@ function createProjectUpdatesGatewayRouter(dependencies = {}) {
       return dependencies.supabase;
     }
     return require("./supabase-client").supabase;
+  }
+
+  function cleanupSecretMatches(providedSecret) {
+    const expectedSecret = typeof dependencies.cleanupKey === "string"
+      ? dependencies.cleanupKey
+      : clean(process.env.PROJECT_UPDATES_CLEANUP_KEY);
+    const provided = clean(providedSecret);
+    if (!expectedSecret || Buffer.byteLength(expectedSecret, "utf8") < 32 || !provided) {
+      return false;
+    }
+    const expectedBuffer = Buffer.from(expectedSecret, "utf8");
+    const providedBuffer = Buffer.from(provided, "utf8");
+    return expectedBuffer.length === providedBuffer.length
+      && crypto.timingSafeEqual(expectedBuffer, providedBuffer);
+  }
+
+  function requireSuperAdminPrincipal(principal) {
+    // The definitive role check remains inside the SECURITY DEFINER RPC.
+    // This API guard merely prevents non-admin identity types from reaching it.
+    if (!principal || principal.principal_type !== "supabase_auth_user") {
+      throw httpError(403, "Super Admin access is required.", "SUPER_ADMIN_REQUIRED");
+    }
+  }
+
+  async function finalizeUploadCleanup(uploadIntentId, result, errorMessage = null) {
+    return callTrustedRpc("gateway_project_updates_finalize_upload_cleanup_trusted", {
+      p_upload_intent_id: uploadIntentId,
+      p_network: MAINNET,
+      p_result: result,
+      p_error: errorMessage == null ? null : clean(errorMessage).slice(0, 1000)
+    });
   }
 
   async function resolvePrincipal(req) {
@@ -501,6 +554,7 @@ function createProjectUpdatesGatewayRouter(dependencies = {}) {
   }));
 
   router.post("/moderation/updates/:updateId/action", route(async (req, principal) => {
+    requireSuperAdminPrincipal(principal);
     const updateId = requireUuid(req.params.updateId, "Update ID");
     const body = requestBody(req);
     const action = clean(body.action).toLowerCase();
@@ -517,6 +571,135 @@ function createProjectUpdatesGatewayRouter(dependencies = {}) {
       p_reason: reason
     });
   }));
+
+  // Comment moderation is separate from update moderation. The RPC performs
+  // the definitive Super Admin check and writes an append-only moderation event.
+  router.post("/moderation/comments/:commentId/action", route(async (req, principal) => {
+    requireSuperAdminPrincipal(principal);
+    const commentId = requireUuid(req.params.commentId, "Comment ID");
+    const body = requestBody(req);
+    const action = clean(body.action).toLowerCase();
+    if (!ALLOWED_CONTENT_ACTIONS.has(action)) {
+      throw httpError(400, "Comment action must be hide, restore or remove.", "INVALID_COMMENT_ACTION");
+    }
+    const reason = boundedText(body.reason, 1, 2000, "Moderation reason");
+    return callTrustedRpc("gateway_project_updates_moderate_comment_trusted", {
+      p_comment_id: commentId,
+      p_network: MAINNET,
+      p_moderator_principal_type: principal.principal_type,
+      p_moderator_principal_id: principal.principal_id,
+      p_action: action,
+      p_reason: reason
+    });
+  }));
+
+  // Manual grants are restricted to Super Admin identities. The SQL RPC
+  // performs the authoritative role check and only manages manual_admin grants.
+  router.post("/projects/:projectId/publisher-grants", route(async (req, principal) => {
+    requireSuperAdminPrincipal(principal);
+    const projectId = requireUuid(req.params.projectId, "Project ID");
+    const body = requestBody(req);
+    const targetPrincipalType = clean(body.target_principal_type).toLowerCase();
+    if (targetPrincipalType !== "albukhr_user" && targetPrincipalType !== "supabase_auth_user") {
+      throw httpError(400, "Target publisher type is invalid.", "INVALID_TARGET_PRINCIPAL_TYPE");
+    }
+    const targetPrincipalId = requireUuid(body.target_principal_id, "Target principal ID");
+    const action = clean(body.action).toLowerCase();
+    if (action !== "grant" && action !== "revoke") {
+      throw httpError(400, "Publisher grant action must be grant or revoke.", "INVALID_GRANT_ACTION");
+    }
+    const reason = body.reason == null || body.reason === ""
+      ? null
+      : boundedText(body.reason, 1, 1000, "Grant reason");
+
+    return callTrustedRpc("gateway_project_updates_manage_publisher_grant_trusted", {
+      p_project_id: projectId,
+      p_network: MAINNET,
+      p_actor_principal_type: principal.principal_type,
+      p_actor_principal_id: principal.principal_id,
+      p_target_principal_type: targetPrincipalType,
+      p_target_principal_id: targetPrincipalId,
+      p_action: action,
+      p_reason: reason
+    });
+  }, { status: 200 }));
+
+  // This maintenance endpoint is not a browser feature. It requires a unique
+  // Render secret (>=32 bytes), claims rows through an atomic SQL lease, and
+  // refuses to delete any object referenced by a project_updates row.
+  router.post("/internal/cleanup-expired-uploads", route(async (req) => {
+    if (!cleanupSecretMatches(req.headers["x-project-updates-cleanup-key"])) {
+      const configured = typeof dependencies.cleanupKey === "string"
+        ? dependencies.cleanupKey
+        : clean(process.env.PROJECT_UPDATES_CLEANUP_KEY);
+      if (!configured || Buffer.byteLength(configured, "utf8") < 32) {
+        throw httpError(503, "Upload cleanup is not configured.", "CLEANUP_NOT_CONFIGURED");
+      }
+      throw httpError(401, "Cleanup authorization failed.", "CLEANUP_UNAUTHORIZED");
+    }
+
+    const db = getDatabase();
+    const limit = boundedLimit(requestBody(req).limit, 25, 100);
+    const claim = await callTrustedRpc("gateway_project_updates_claim_expired_upload_cleanup_trusted", {
+      p_network: MAINNET,
+      p_limit: limit
+    });
+    const items = Array.isArray(claim.items) ? claim.items : [];
+    const summary = { claimed: items.length, deleted_or_missing: 0, protected: 0, retry: 0 };
+
+    for (const item of items) {
+      const uploadIntentId = requireUuid(item.upload_intent_id, "Upload intent ID");
+      const projectId = requireUuid(item.project_id, "Project ID");
+      const storagePath = clean(item.storage_path);
+      const expectedPrefix = `mainnet/${projectId}/${uploadIntentId}/`;
+
+      if (!storagePath.startsWith(expectedPrefix) || storagePath.includes("..") || storagePath.includes("\\")) {
+        await finalizeUploadCleanup(uploadIntentId, "retry", "Upload path failed cleanup safety validation.");
+        summary.retry += 1;
+        continue;
+      }
+
+      let linkedUpdate;
+      try {
+        const lookup = await db.from("project_updates")
+          .select("id")
+          .eq("upload_intent_id", uploadIntentId)
+          .eq("network", MAINNET)
+          .maybeSingle();
+        if (lookup?.error) throw lookup.error;
+        linkedUpdate = lookup?.data || null;
+      } catch (_) {
+        await finalizeUploadCleanup(uploadIntentId, "retry", "Could not verify whether the image is referenced by a published update.");
+        summary.retry += 1;
+        continue;
+      }
+
+      if (linkedUpdate) {
+        await finalizeUploadCleanup(uploadIntentId, "protected");
+        summary.protected += 1;
+        continue;
+      }
+
+      let removalError = null;
+      try {
+        const removal = await db.storage.from(BUCKET).remove([storagePath]);
+        removalError = removal?.error || null;
+      } catch (error) {
+        removalError = error;
+      }
+
+      if (removalError) {
+        await finalizeUploadCleanup(uploadIntentId, "retry", removalError.message || "Storage object removal failed.");
+        summary.retry += 1;
+        continue;
+      }
+
+      await finalizeUploadCleanup(uploadIntentId, "deleted_or_missing");
+      summary.deleted_or_missing += 1;
+    }
+
+    return summary;
+  }, { authentication: false }));
 
   return router;
 }
