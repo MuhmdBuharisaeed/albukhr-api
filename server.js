@@ -1,6 +1,6 @@
 /* ALBUKHR API — Mainnet Financial + Contributor + Internal Funding
  * + Internal Investment + Internal Liquidity + External Project
- * + Mainnet Identity + DApp Service v2
+ * + Mainnet Identity + Project Updates & Evidence + DApp Service v2
  *
  * Version: 2.3.0
  */
@@ -42,6 +42,10 @@ const {
 const {
   mainnetIdentityGatewayRouter
 } = require("./src/mainnet-identity-gateway");
+
+const {
+  projectUpdatesGatewayRouter
+} = require("./src/project-updates-gateway");
 
 
 /* =========================================================
@@ -401,6 +405,25 @@ app.use(internalLiquidityGatewayRouter);
 app.use(
   "/api/identity",
   mainnetIdentityGatewayRouter
+);
+
+
+/* =========================================================
+   PROJECT UPDATES & EVIDENCE — MAINNET TRUSTED GATEWAY
+========================================================= */
+
+/*
+ * Additive, Mainnet-only Project Updates gateway.
+ *
+ * IMPORTANT:
+ * - Its trusted database RPCs and project-updates storage bucket
+ *   must be deployed and verified before production activation.
+ * - Do not point this gateway at Testnet.
+ * - Do not use this gateway for payments, investments or treasury.
+ */
+app.use(
+  "/api/project-updates",
+  projectUpdatesGatewayRouter
 );
 
 
