@@ -6,9 +6,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check src/mainnet-api.js && node --check src/financial-gateway.js && node --check src/pi-client.js && node --check src/supabase-client.js && node --check src/contributor-application-gateway.js && node --check src/contributor-gateway.js && node --check src/internal-investment-gateway.js && node --check src/internal-liquidity-gateway.js && node --check src/internal-funding-gateway.js && node --check src/external-project-gateway.js && node --check src/external-project-funding-gateway.js && node --check src/external-project-owner-operations-gateway.js && node --check src/mainnet-identity-gateway.js && node --check src/dapp-service-v2-gateway.js && node --check src/wallet-gateway.js && node --check src/wallet-balance-service.js && node --check src/project-updates-gateway.js && node --check src/project-updates-validation.js",
+    "check": "node --check server.js && node --check src/mainnet-api.js && node --check src/financial-gateway.js && node --check src/pi-client.js && node --check src/supabase-client.js && node --check src/contributor-application-gateway.js && node --check src/contributor-gateway.js && node --check src/internal-investment-gateway.js && node --check src/internal-liquidity-gateway.js && node --check src/internal-funding-gateway.js && node --check src/external-project-gateway.js && node --check src/external-project-funding-gateway.js && node --check src/external-project-owner-operations-gateway.js && node --check src/mainnet-identity-gateway.js && node --check src/dapp-service-v2-gateway.js && node --check src/wallet-gateway.js && node --check src/wallet-balance-service.js && node --check src/project-updates-gateway.js && node --check src/project-updates-validation.js && node --check src/project-updates-cleanup-client.js && node --check scripts/project-updates-cleanup.js",
     "test:project-updates": "node --test test/project-updates-validation.test.js",
-    "test:wallet": "node --test test/wallet-balance-service.test.js"
+    "test:wallet": "node --test test/wallet-balance-service.test.js",
+    "test:project-updates-cleanup": "node --test test/project-updates-cleanup-client.test.js",
+    "cleanup:project-updates": "node scripts/project-updates-cleanup.js"
   },
   "engines": {
     "node": ">=20 <25"
