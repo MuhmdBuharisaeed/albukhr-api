@@ -1,6 +1,8 @@
 "use strict";
 
 const PI_API_BASE = "https://api.minepi.com/v2";
+const PI_API_TIMEOUT_MS = 10_000;
+const PI_API_MAX_TIMEOUT_MS = 30_000;
 
 function apiError(status, message) {
   const error = new Error(message);
@@ -95,22 +97,186 @@ async function completePayment(id, txid) {
   });
 }
 
-async function getPioneer(token) {
-  const accessToken = String(token || "").trim();
-  if (!accessToken) throw new Error("Pi access token is required.");
+function piIdentityError(status, code, message, extra = {}) {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
 
-  const response = await fetch(`${PI_API_BASE}/me`, {
-    headers: { Authorization: `Bearer ${accessToken}` }
-  });
-  const data = await response.json().catch(() => null);
-
-  if (!response.ok || !data?.uid) {
-    const error = new Error("Pi authentication could not be verified.");
-    error.status = response.status || 401;
-    throw error;
+  if (extra.retryAfter) {
+    error.retryAfter = extra.retryAfter;
   }
 
-  return data;
+  return error;
+}
+
+function normalizeRetryAfter(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+
+  if (/^\d+$/.test(raw)) {
+    return String(Math.min(3600, Math.max(1, Number(raw))));
+  }
+
+  const timestamp = Date.parse(raw);
+  if (!Number.isFinite(timestamp)) return null;
+
+  const seconds = Math.ceil((timestamp - Date.now()) / 1000);
+  if (seconds <= 0) return "1";
+  return String(Math.min(3600, seconds));
+}
+
+function resolvePiIdentityTimeout(value) {
+  const requested = Number(value);
+  if (!Number.isFinite(requested) || requested <= 0) {
+    return PI_API_TIMEOUT_MS;
+  }
+  return Math.min(PI_API_MAX_TIMEOUT_MS, Math.max(1, Math.floor(requested)));
+}
+
+async function getPioneer(token, options = {}) {
+  const accessToken = String(token || "").trim();
+  if (!accessToken) {
+    throw piIdentityError(401, "PI_TOKEN_REQUIRED", "Pi access token is required.");
+  }
+
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== "function") {
+    throw piIdentityError(
+      503,
+      "PI_API_UNAVAILABLE",
+      "Pi identity service is unavailable."
+    );
+  }
+
+  const timeoutMs = resolvePiIdentityTimeout(options.timeoutMs);
+  const controller = typeof AbortController === "function"
+    ? new AbortController()
+    : null;
+
+  let timeoutHandle = null;
+  let requestResult;
+  let timeoutTriggered = false;
+
+  const requestPromise = (async function () {
+    const response = await fetchImpl(`${PI_API_BASE}/me`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json"
+      },
+      cache: "no-store",
+      redirect: "error",
+      ...(controller ? { signal: controller.signal } : {})
+    });
+
+    // Read the body before stopping the timeout. A slow upstream response body
+    // must not leave this request waiting without a bound.
+    const responseText = await response.text();
+    return { response, responseText };
+  })();
+
+  const timeoutPromise = new Promise((resolve, reject) => {
+    timeoutHandle = setTimeout(() => {
+      timeoutTriggered = true;
+      try {
+        controller?.abort();
+      } catch (_) {
+        // The timeout response below remains authoritative if abort fails.
+      }
+      reject(piIdentityError(
+        504,
+        "PI_API_TIMEOUT",
+        "Pi identity verification timed out."
+      ));
+    }, timeoutMs);
+  });
+
+  try {
+    requestResult = await Promise.race([requestPromise, timeoutPromise]);
+  } catch (error) {
+    if (error?.code === "PI_API_TIMEOUT" || timeoutTriggered) {
+      throw piIdentityError(
+        504,
+        "PI_API_TIMEOUT",
+        "Pi identity verification timed out."
+      );
+    }
+
+    // Do not expose low-level DNS, TLS, socket, or fetch error details to the
+    // browser. These are service/network failures, not proof of a bad token.
+    throw piIdentityError(
+      503,
+      "PI_API_UNAVAILABLE",
+      "Pi identity service is temporarily unavailable."
+    );
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+
+  const { response, responseText } = requestResult;
+  let data = null;
+
+  try {
+    data = responseText ? JSON.parse(responseText) : null;
+  } catch (_) {
+    if (response.ok) {
+      throw piIdentityError(
+        502,
+        "PI_API_INVALID_RESPONSE",
+        "Pi identity service returned an invalid response."
+      );
+    }
+  }
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw piIdentityError(
+        401,
+        "PI_TOKEN_INVALID",
+        "Pi access token is invalid or has expired."
+      );
+    }
+
+    if (response.status === 429) {
+      throw piIdentityError(
+        503,
+        "PI_API_RATE_LIMITED",
+        "Pi identity service is temporarily rate-limited.",
+        { retryAfter: normalizeRetryAfter(response.headers?.get?.("retry-after")) }
+      );
+    }
+
+    if (response.status >= 500) {
+      throw piIdentityError(
+        503,
+        "PI_API_UNAVAILABLE",
+        "Pi identity service is temporarily unavailable."
+      );
+    }
+
+    // Pi documents HTTP 401 for an invalid/tampered access token. Other
+    // upstream 4xx responses usually indicate an API/configuration problem;
+    // do not incorrectly tell the Pioneer their token is invalid.
+    throw piIdentityError(
+      502,
+      "PI_API_REJECTED_REQUEST",
+      "Pi identity service could not complete the verification request."
+    );
+  }
+
+  if (!data || typeof data !== "object" || Array.isArray(data) || !String(data.uid || "").trim()) {
+    throw piIdentityError(
+      502,
+      "PI_API_INVALID_RESPONSE",
+      "Pi identity service returned an invalid user identity."
+    );
+  }
+
+  return {
+    ...data,
+    uid: String(data.uid).trim(),
+    username: String(data.username || "").trim() || null
+  };
 }
 
 function normalize(value) {
