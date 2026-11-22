@@ -15,6 +15,10 @@
 const crypto = require("node:crypto");
 const express = require("express");
 const { getPioneer } = require("./pi-client");
+const {
+  resolveSupabaseAdminPrincipal,
+  listPublisherProjects
+} = require("./project-updates-admin-access");
 
 const {
   MAINNET,
@@ -115,39 +119,7 @@ function createProjectUpdatesGatewayRouter(dependencies = {}) {
     // The header chooses the verification mechanism only. It is never treated
     // as identity proof; the selected provider validates the bearer itself.
     if (provider === "supabase" || provider === "supabase-auth") {
-      let verified;
-      try {
-        verified = await db.auth.getUser(token);
-      } catch (_) {
-        throw httpError(503, "Sign-in verification is temporarily unavailable.", "AUTH_VERIFICATION_UNAVAILABLE");
-      }
-      const authUser = verified && verified.data && verified.data.user;
-      if (verified?.error || !authUser?.id) {
-        throw httpError(401, "The supplied sign-in token is invalid or expired.", "AUTH_TOKEN_INVALID");
-      }
-
-      let adminQuery;
-      try {
-        adminQuery = await db.schema("albukhr_security")
-          .from("admin_users")
-          .select("user_id,status")
-          .eq("user_id", authUser.id)
-          .eq("status", "active")
-          .maybeSingle();
-      } catch (_) {
-        throw httpError(503, "Publisher identity could not be verified.", "ADMIN_IDENTITY_LOOKUP_FAILED");
-      }
-      if (adminQuery?.error) {
-        throw httpError(503, "Publisher identity could not be verified.", "ADMIN_IDENTITY_LOOKUP_FAILED");
-      }
-      if (!adminQuery?.data) {
-        throw httpError(403, "This account is not an active ALBUKHR project administrator.", "ADMIN_ACCESS_REQUIRED");
-      }
-      return Object.freeze({
-        principal_type: "supabase_auth_user",
-        principal_id: authUser.id,
-        network: MAINNET
-      });
+      return resolveSupabaseAdminPrincipal(db, token);
     }
 
     if (provider !== "pi") {
@@ -351,6 +323,13 @@ function createProjectUpdatesGatewayRouter(dependencies = {}) {
       p_sort: sort
     });
   }, { authentication: false }));
+
+  // Discover only projects granted to the authenticated principal. The
+  // helper derives the principal from verified credentials and filters the
+  // grant ledger and project rows to Mainnet on the server.
+  router.get("/publisher-projects", route(async (_req, principal) => {
+    return listPublisherProjects(getDatabase(), principal);
+  }));
 
   router.get("/projects/:projectId/publisher-access", route(async (req, principal) => {
     const projectId = requireUuid(req.params.projectId, "Project ID");
