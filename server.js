@@ -47,6 +47,15 @@ const {
   projectUpdatesGatewayRouter
 } = require("./src/project-updates-gateway");
 
+/*
+ * Stage 6G — read-only moderation audit history.
+ * The route has its own server-side Supabase JWT + AAL2 verification,
+ * and the trusted SQL RPC performs the authoritative Super Admin check.
+ */
+const {
+  projectUpdatesModerationHistoryRouter
+} = require("./src/project-updates-moderation-history");
+
 
 /* =========================================================
    APPLICATION INITIALIZATION
@@ -413,6 +422,31 @@ app.use(internalLiquidityGatewayRouter);
 app.use(
   "/api/identity",
   mainnetIdentityGatewayRouter
+);
+
+
+/* =========================================================
+   PROJECT UPDATES — MODERATION HISTORY (STAGE 6G)
+========================================================= */
+
+/*
+ * Mount the dedicated history endpoint BEFORE the general Project
+ * Updates router. This avoids route-order ambiguity and keeps the
+ * endpoint scoped to:
+ *
+ * GET /api/project-updates/moderation/history
+ *
+ * The router independently verifies:
+ * - Supabase Auth bearer token
+ * - Active ALBUKHR Admin identity
+ * - AAL2 assurance
+ *
+ * The trusted SQL RPC independently verifies the Super Admin role.
+ * This route is read-only and Mainnet-only.
+ */
+app.use(
+  "/api/project-updates/moderation/history",
+  projectUpdatesModerationHistoryRouter
 );
 
 
