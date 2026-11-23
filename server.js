@@ -91,12 +91,18 @@ app.use(
       path === "/api/admin/session" ||
       path.startsWith("/api/admin/session/");
 
+    const isProjectUpdatesRoute =
+      path === "/api/project-updates" ||
+      path.startsWith("/api/project-updates/");
+
     const adminOrigin = String(
       process.env.ALBUKHR_ADMIN_SESSION_ORIGIN || ""
     ).trim();
 
+    // The approved Admin origin may call Admin-session routes and the
+    // dedicated Project Updates gateway. It is not allowlisted globally.
     const isAllowedAdminOrigin =
-      isAdminSession &&
+      (isAdminSession || isProjectUpdatesRoute) &&
       Boolean(adminOrigin) &&
       origin === adminOrigin;
 
@@ -122,7 +128,8 @@ app.use(
           "Content-Type",
           "Authorization",
           "X-API-Key",
-          "X-File-Name"
+          "X-File-Name",
+          "X-Albukhr-Auth-Provider"
         ],
         preflightContinue: false,
         optionsSuccessStatus: 204
@@ -150,7 +157,8 @@ app.use(
         "Content-Type",
         "Authorization",
         "X-API-Key",
-        "X-File-Name"
+        "X-File-Name",
+        "X-Albukhr-Auth-Provider"
       ],
       preflightContinue: false,
       optionsSuccessStatus: 204
