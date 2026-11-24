@@ -385,6 +385,11 @@ async function removePrivateDocumentObject(storageBucket, storagePath) {
 
 function respond(handler) {
   return async (req, res) => {
+    // External applicant responses can contain private contact and project data.
+    // Prevent browser, proxy and intermediary caches from retaining the payload.
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+    res.set("Pragma", "no-cache");
+
     try {
       const identity = await verifiedPiIdentity(req);
       const data = await handler(req, identity);
@@ -774,6 +779,51 @@ router.delete(
       document_id: uuid(req.params.documentId, "document_id"),
       storage_deleted: true
     };
+  })
+);
+
+/* -------------------------------------------------------------------------- */
+/* Approved / converted owner amendments                                     */
+/* -------------------------------------------------------------------------- */
+
+// Owner contact and team changes are requests only. The Mainnet database
+// snapshots the current values and does not apply anything until an
+// authorized External Admin / Super Admin approves the request at AAL2.
+// Identity is derived from Pi /v2/me above; browser-supplied UID/network fields
+// are deliberately ignored.
+router.get(
+  "/:applicationId/amendments",
+  respond(async (req, identity) =>
+    callRpc("gateway_get_my_external_project_amendments_trusted", {
+      p_pi_uid: identity.pi_uid,
+      p_application_id: uuid(req.params.applicationId)
+    })
+  )
+);
+
+router.post(
+  "/:applicationId/amendments",
+  respond(async (req, identity) => {
+    const input = body(req);
+    const requestType = clean(input.request_type).toLowerCase();
+    if (!["owner_contact", "project_team"].includes(requestType)) {
+      throw httpError(400, "Choose an owner contact or project team amendment.");
+    }
+    const reason = clean(input.reason);
+    if (reason.length < 10 || reason.length > 2000) {
+      throw httpError(400, "Explain the requested change in 10 to 2,000 characters.");
+    }
+    if (!input.requested_values || typeof input.requested_values !== "object" || Array.isArray(input.requested_values)) {
+      throw httpError(400, "Requested amendment values are required.");
+    }
+
+    return callRpc("gateway_create_my_external_project_amendment_trusted", {
+      p_pi_uid: identity.pi_uid,
+      p_application_id: uuid(req.params.applicationId),
+      p_request_type: requestType,
+      p_reason: reason,
+      p_requested_values: input.requested_values
+    });
   })
 );
 
