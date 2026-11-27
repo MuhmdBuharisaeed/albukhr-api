@@ -8,6 +8,13 @@
 const express = require("express");
 const { supabase } = require("./supabase-client");
 const { resolvePublishedTerm } = require("./published-term-projection");
+const { isSupportedStakingDuration } = require("./staking-duration-catalogue");
+const {
+  sessionFingerprint,
+  createStakingPolicyAcceptanceRouter,
+  validateStakingPolicyAcceptance,
+  assertPaymentAcceptanceMetadata,
+} = require("./staking-policy-acceptance");
 const { a2uReconciliationRouter } = require("./a2u-reconciliation-router");
 const {
   getPayment,
@@ -20,6 +27,7 @@ const { executeWithdrawalPayout: executeSharedA2UPayout } = require("./a2u-payou
 
 const router = express.Router();
 router.use(a2uReconciliationRouter);
+router.use(createStakingPolicyAcceptanceRouter({ supabase, getPioneer }));
 const MAINNET = "mainnet";
 const CORE_ACTION = "core_investment";
 const WITHDRAWAL_FEE_RATE = 0.01;
@@ -59,7 +67,7 @@ function positiveAmount(value) {
 
 function duration(value) {
   const days = Number(value);
-  if (!Number.isInteger(days) || ![30, 60, 90, 180, 365, 430].includes(days)) {
+  if (!isSupportedStakingDuration(days)) {
     throw httpError(400, "duration is invalid.");
   }
   return days;
@@ -76,15 +84,16 @@ function requireBearer(req) {
 }
 
 async function verifiedPiIdentity(req) {
+  const token = requireBearer(req);
   let pioneer;
   try {
-    pioneer = await getPioneer(requireBearer(req));
+    pioneer = await getPioneer(token);
   } catch {
     throw httpError(401, "Pi identity could not be verified.");
   }
   const piUid = String(pioneer?.uid || "").trim();
   if (!piUid) throw httpError(401, "Pi identity could not be verified.");
-  return { pi_uid: piUid };
+  return { pi_uid: piUid, session_fingerprint: sessionFingerprint(token) };
 }
 
 async function getProject(projectCode, { requireActive = false } = {}) {
@@ -178,8 +187,14 @@ router.post("/api/pi-payment-approve", async (req, res) => {
 
     const project = await getProject(projectCode, { requireActive: true });
     await requirePublishedCoreTerm({ project, durationDays, termVersionId });
+    const acceptanceId = uuidValue(b.acceptance_id, "acceptance_id");
+    const acceptance = await validateStakingPolicyAcceptance({
+      supabase, acceptanceId, projectId: project.id, termVersionId,
+      piUid: identity.pi_uid, sessionFingerprint: identity.session_fingerprint,
+    });
     const treasury = await getTreasury(project.id);
     const payment = await getPayment(paymentId);
+    assertPaymentAcceptanceMetadata(payment, acceptanceId, acceptance);
     const verified = verifyCorePayment(payment, {
       paymentId,
       projectCode: project.project_code,
@@ -216,6 +231,11 @@ router.post("/api/pi-payment-complete", async (req, res) => {
 
     const project = await getProject(projectCode, { requireActive: true });
     await requirePublishedCoreTerm({ project, durationDays, termVersionId });
+    const acceptanceId = uuidValue(b.acceptance_id, "acceptance_id");
+    const acceptance = await validateStakingPolicyAcceptance({
+      supabase, acceptanceId, projectId: project.id, termVersionId,
+      piUid: identity.pi_uid, sessionFingerprint: identity.session_fingerprint,
+    });
     const treasury = await getTreasury(project.id);
     const expected = {
       paymentId,
@@ -228,6 +248,7 @@ router.post("/api/pi-payment-complete", async (req, res) => {
     };
 
     const before = await getPayment(paymentId);
+    assertPaymentAcceptanceMetadata(before, acceptanceId, acceptance);
     const beforeVerified = verifyCorePayment(before, { ...expected, requireRecipient: false, requireApproved: true });
     let completion = before;
     if (beforeVerified.status !== "completed") {
@@ -244,6 +265,7 @@ router.post("/api/pi-payment-complete", async (req, res) => {
       txid
     });
     const transactionId = finalPayment.transactionId;
+    assertPaymentAcceptanceMetadata(completion, acceptanceId, acceptance);
 
     const { data, error } = await supabase.rpc("create_stake_from_completed_payment", {
       p_project_id: project.id,
@@ -261,6 +283,11 @@ router.post("/api/pi-payment-complete", async (req, res) => {
         project_code: projectCode,
         duration_days: durationDays,
         term_version_id: termVersionId,
+        acceptance_id: acceptanceId,
+        term_hash: acceptance.term_hash,
+        policy_revision: acceptance.policy_revision,
+        policy_hash: acceptance.policy_hash,
+        accepted_at_utc: acceptance.accepted_at_utc,
         transaction_id: transactionId,
         accounting_effect: "core_investment_only"
       }
