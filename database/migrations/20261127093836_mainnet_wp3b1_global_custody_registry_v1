@@ -1,0 +1,379 @@
+-- ALBUKHR Mainnet WP3B.1
+-- Global Custody Registry foundation for Core, Internal and External projects.
+-- No project accounts, wallet addresses, balances, or evidence are seeded.
+-- All tables are deliberately locked until reviewed trusted RPC workflows exist.
+
+begin;
+
+create table albukhr_security.financial_custody_accounts (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete restrict,
+  network text not null default 'mainnet',
+  asset_code text not null default 'PI',
+  fund_class text not null,
+  account_type text not null,
+  custody_model text not null,
+  custody_provider text not null,
+  account_reference text not null,
+  public_account_address text,
+  legal_account_holder text,
+  version_number integer not null default 1,
+  supersedes_account_id uuid,
+  submitted_by_kind text not null,
+  submitted_by_ref uuid,
+  submitted_at timestamptz not null default now(),
+  metadata jsonb not null default '{}'::jsonb,
+  constraint financial_custody_accounts_mainnet_ck
+    check (network = 'mainnet'),
+  constraint financial_custody_accounts_asset_ck
+    check (asset_code = 'PI'),
+  constraint financial_custody_accounts_fund_class_ck
+    check (fund_class in (
+      'principal',
+      'reward_reserve',
+      'withdrawal_liquidity_reserve',
+      'operating',
+      'escrow',
+      'general_treasury',
+      'payout_clearing'
+    )),
+  constraint financial_custody_accounts_type_ck
+    check (account_type in (
+      'project_wallet',
+      'custodial_wallet',
+      'escrow_account',
+      'third_party_account',
+      'clearing_account'
+    )),
+  constraint financial_custody_accounts_model_ck
+    check (custody_model in (
+      'self_custody',
+      'multisignature',
+      'third_party_custodian',
+      'escrow',
+      'controlled_release'
+    )),
+  constraint financial_custody_accounts_provider_ck
+    check (length(btrim(custody_provider)) between 2 and 200),
+  constraint financial_custody_accounts_reference_ck
+    check (length(btrim(account_reference)) between 2 and 300),
+  constraint financial_custody_accounts_address_ck
+    check (public_account_address is null or length(btrim(public_account_address)) between 8 and 300),
+  constraint financial_custody_accounts_holder_ck
+    check (legal_account_holder is null or length(btrim(legal_account_holder)) between 2 and 300),
+  constraint financial_custody_accounts_version_ck
+    check (version_number > 0),
+  constraint financial_custody_accounts_submitter_ck
+    check (
+      (submitted_by_kind in ('project_owner', 'admin') and submitted_by_ref is not null)
+      or (submitted_by_kind = 'system' and submitted_by_ref is null)
+    ),
+  constraint financial_custody_accounts_metadata_ck
+    check (jsonb_typeof(metadata) = 'object'),
+  constraint financial_custody_accounts_scope_key
+    unique (id, project_id, network, asset_code),
+  constraint financial_custody_accounts_full_scope_uq
+    unique (id, project_id, network, asset_code, fund_class, account_reference),
+  constraint financial_custody_accounts_version_uq
+    unique (project_id, network, asset_code, fund_class, account_reference, version_number),
+  constraint financial_custody_accounts_supersedes_fk
+    foreign key (
+      supersedes_account_id, project_id, network, asset_code, fund_class, account_reference
+    ) references albukhr_security.financial_custody_accounts (
+      id, project_id, network, asset_code, fund_class, account_reference
+    ) on delete restrict
+);
+
+create table albukhr_security.financial_custody_evidence (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null,
+  project_id uuid not null,
+  network text not null default 'mainnet',
+  asset_code text not null default 'PI',
+  evidence_category text not null,
+  source_kind text not null,
+  source_authority text,
+  evidence_reference text not null,
+  storage_bucket text,
+  storage_path text,
+  content_sha256 text not null,
+  source_record_reference text,
+  issued_at timestamptz,
+  source_observed_at timestamptz not null,
+  captured_at timestamptz not null default now(),
+  expires_at timestamptz,
+  submitted_by_kind text not null,
+  submitted_by_ref uuid,
+  metadata jsonb not null default '{}'::jsonb,
+  constraint financial_custody_evidence_network_ck check (network = 'mainnet'),
+  constraint financial_custody_evidence_asset_ck check (asset_code = 'PI'),
+  constraint financial_custody_evidence_category_ck
+    check (evidence_category in (
+      'account_ownership',
+      'account_control',
+      'fund_segregation',
+      'liquidity_access',
+      'balance_statement',
+      'transaction_proof',
+      'signer_authority',
+      'independent_audit',
+      'reconciliation_support'
+    )),
+  constraint financial_custody_evidence_source_ck
+    check (source_kind in (
+      'pi_horizon',
+      'pi_platform_payment',
+      'custodian_api',
+      'custodian_signed_statement',
+      'independent_auditor',
+      'bank_statement',
+      'owner_declaration',
+      'screenshot',
+      'uploaded_document',
+      'other'
+    )),
+  constraint financial_custody_evidence_reference_ck
+    check (length(btrim(evidence_reference)) between 1 and 1000),
+  constraint financial_custody_evidence_storage_pair_ck
+    check ((storage_bucket is null) = (storage_path is null)),
+  constraint financial_custody_evidence_sha256_ck
+    check (content_sha256 ~ '^[0-9a-f]{64}$'),
+  constraint financial_custody_evidence_source_ref_ck
+    check (source_record_reference is null or length(btrim(source_record_reference)) <= 500),
+  constraint financial_custody_evidence_dates_ck
+    check (expires_at is null or expires_at > captured_at),
+  constraint financial_custody_evidence_submitter_ck
+    check (
+      (submitted_by_kind in ('project_owner', 'admin') and submitted_by_ref is not null)
+      or (submitted_by_kind = 'system' and submitted_by_ref is null)
+    ),
+  constraint financial_custody_evidence_metadata_ck
+    check (jsonb_typeof(metadata) = 'object'),
+  constraint financial_custody_evidence_scope_fk
+    foreign key (account_id, project_id, network, asset_code)
+    references albukhr_security.financial_custody_accounts
+      (id, project_id, network, asset_code) on delete restrict,
+  constraint financial_custody_evidence_scope_uq
+    unique (id, account_id, project_id, network, asset_code)
+);
+
+create table albukhr_security.financial_custody_balance_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null,
+  evidence_id uuid not null,
+  project_id uuid not null,
+  network text not null default 'mainnet',
+  asset_code text not null default 'PI',
+  total_balance numeric not null,
+  available_balance numeric not null,
+  frozen_balance numeric not null,
+  pledged_balance numeric not null,
+  encumbered_balance numeric not null,
+  unclassified_balance numeric not null,
+  source_observed_at timestamptz not null,
+  captured_at timestamptz not null default now(),
+  source_snapshot_reference text not null,
+  snapshot_digest text not null,
+  metadata jsonb not null default '{}'::jsonb,
+  constraint financial_custody_balance_network_ck check (network = 'mainnet'),
+  constraint financial_custody_balance_asset_ck check (asset_code = 'PI'),
+  constraint financial_custody_balance_total_ck
+    check (total_balance >= 0 and total_balance < 'Infinity'::numeric),
+  constraint financial_custody_balance_available_ck
+    check (available_balance >= 0 and available_balance < 'Infinity'::numeric),
+  constraint financial_custody_balance_frozen_ck
+    check (frozen_balance >= 0 and frozen_balance < 'Infinity'::numeric),
+  constraint financial_custody_balance_pledged_ck
+    check (pledged_balance >= 0 and pledged_balance < 'Infinity'::numeric),
+  constraint financial_custody_balance_encumbered_ck
+    check (encumbered_balance >= 0 and encumbered_balance < 'Infinity'::numeric),
+  constraint financial_custody_balance_unclassified_ck
+    check (unclassified_balance >= 0 and unclassified_balance < 'Infinity'::numeric),
+  constraint financial_custody_balance_partition_ck
+    check (
+      available_balance + frozen_balance + pledged_balance +
+      encumbered_balance + unclassified_balance = total_balance
+    ),
+  constraint financial_custody_balance_reference_ck
+    check (length(btrim(source_snapshot_reference)) between 1 and 500),
+  constraint financial_custody_balance_digest_ck
+    check (snapshot_digest ~ '^[0-9a-f]{64}$'),
+  constraint financial_custody_balance_metadata_ck
+    check (jsonb_typeof(metadata) = 'object'),
+  constraint financial_custody_balance_account_fk
+    foreign key (account_id, project_id, network, asset_code)
+    references albukhr_security.financial_custody_accounts
+      (id, project_id, network, asset_code) on delete restrict,
+  constraint financial_custody_balance_evidence_fk
+    foreign key (evidence_id, account_id, project_id, network, asset_code)
+    references albukhr_security.financial_custody_evidence
+      (id, account_id, project_id, network, asset_code) on delete restrict,
+  constraint financial_custody_balance_snapshot_scope_key
+    unique (id, account_id, project_id, network, asset_code),
+  constraint financial_custody_balance_snapshot_uq
+    unique (account_id, source_snapshot_reference)
+);
+
+create table albukhr_security.financial_custody_review_events (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null,
+  evidence_id uuid,
+  snapshot_id uuid,
+  project_id uuid not null,
+  network text not null default 'mainnet',
+  asset_code text not null default 'PI',
+  event_type text not null,
+  reviewer_role_code text not null,
+  reviewer_admin_user_id uuid,
+  performed_by_kind text not null,
+  performed_by_ref uuid,
+  reason text not null,
+  authority_reference text,
+  event_payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  constraint financial_custody_review_network_ck check (network = 'mainnet'),
+  constraint financial_custody_review_asset_ck check (asset_code = 'PI'),
+  constraint financial_custody_review_event_type_ck
+    check (event_type in (
+      'evidence_submitted',
+      'account_submitted',
+      'verified',
+      'rejected',
+      'expired',
+      'frozen',
+      'disputed',
+      'cleared',
+      'superseded',
+      'reconciliation_flagged',
+      'reconciliation_cleared'
+    )),
+  constraint financial_custody_review_role_ck
+    check (reviewer_role_code in (
+      'finance_treasury',
+      'risk_compliance',
+      'governance',
+      'custody_signer',
+      'system_verifier'
+    )),
+  constraint financial_custody_review_actor_ck
+    check (
+      (performed_by_kind = 'admin' and performed_by_ref is not null and reviewer_admin_user_id is not null and performed_by_ref = reviewer_admin_user_id)
+      or (performed_by_kind = 'system' and performed_by_ref is null and reviewer_admin_user_id is null)
+    ),
+  constraint financial_custody_review_reason_ck
+    check (length(btrim(reason)) between 3 and 2000),
+  constraint financial_custody_review_authority_ck
+    check (authority_reference is null or length(btrim(authority_reference)) <= 500),
+  constraint financial_custody_review_payload_ck
+    check (jsonb_typeof(event_payload) = 'object'),
+  constraint financial_custody_review_account_fk
+    foreign key (account_id, project_id, network, asset_code)
+    references albukhr_security.financial_custody_accounts
+      (id, project_id, network, asset_code) on delete restrict,
+  constraint financial_custody_review_evidence_fk
+    foreign key (evidence_id, account_id, project_id, network, asset_code)
+    references albukhr_security.financial_custody_evidence
+      (id, account_id, project_id, network, asset_code) on delete restrict,
+  constraint financial_custody_review_snapshot_fk
+    foreign key (snapshot_id, account_id, project_id, network, asset_code)
+    references albukhr_security.financial_custody_balance_snapshots
+      (id, account_id, project_id, network, asset_code) on delete restrict,
+  constraint financial_custody_review_reviewer_fk
+    foreign key (reviewer_admin_user_id)
+    references albukhr_security.admin_users(user_id) on delete restrict,
+  constraint financial_custody_review_target_ck
+    check (evidence_id is not null or snapshot_id is not null or event_type in ('account_submitted','superseded'))
+);
+
+create index financial_custody_accounts_project_fund_idx
+  on albukhr_security.financial_custody_accounts
+  (project_id, network, fund_class, submitted_at desc);
+create index financial_custody_evidence_account_category_idx
+  on albukhr_security.financial_custody_evidence
+  (account_id, evidence_category, source_observed_at desc);
+create index financial_custody_balance_account_observed_idx
+  on albukhr_security.financial_custody_balance_snapshots
+  (account_id, source_observed_at desc);
+create index financial_custody_review_account_created_idx
+  on albukhr_security.financial_custody_review_events
+  (account_id, created_at desc);
+
+create function albukhr_security.assert_mainnet_financial_custody_project()
+returns trigger
+language plpgsql
+set search_path = ''
+as $function$
+begin
+  if not exists (
+    select 1
+    from public.projects p
+    where p.id = new.project_id
+      and lower(btrim(p.network)) = 'mainnet'
+  ) then
+    raise exception 'Financial custody records may only reference a Mainnet project.'
+      using errcode = '23514';
+  end if;
+  return new;
+end;
+$function$;
+
+create trigger financial_custody_accounts_mainnet_project_trg
+before insert on albukhr_security.financial_custody_accounts
+for each row execute function albukhr_security.assert_mainnet_financial_custody_project();
+
+create function albukhr_security.reject_financial_custody_record_mutation()
+returns trigger
+language plpgsql
+set search_path = ''
+as $function$
+begin
+  raise exception 'Financial custody records are append-only; create a superseding record or a new review event.'
+    using errcode = '55000';
+end;
+$function$;
+
+create trigger financial_custody_accounts_append_only_trg
+before update or delete on albukhr_security.financial_custody_accounts
+for each row execute function albukhr_security.reject_financial_custody_record_mutation();
+
+create trigger financial_custody_evidence_append_only_trg
+before update or delete on albukhr_security.financial_custody_evidence
+for each row execute function albukhr_security.reject_financial_custody_record_mutation();
+
+create trigger financial_custody_balance_append_only_trg
+before update or delete on albukhr_security.financial_custody_balance_snapshots
+for each row execute function albukhr_security.reject_financial_custody_record_mutation();
+
+create trigger financial_custody_review_append_only_trg
+before update or delete on albukhr_security.financial_custody_review_events
+for each row execute function albukhr_security.reject_financial_custody_record_mutation();
+
+alter table albukhr_security.financial_custody_accounts enable row level security;
+alter table albukhr_security.financial_custody_accounts force row level security;
+alter table albukhr_security.financial_custody_evidence enable row level security;
+alter table albukhr_security.financial_custody_evidence force row level security;
+alter table albukhr_security.financial_custody_balance_snapshots enable row level security;
+alter table albukhr_security.financial_custody_balance_snapshots force row level security;
+alter table albukhr_security.financial_custody_review_events enable row level security;
+alter table albukhr_security.financial_custody_review_events force row level security;
+
+revoke all on table
+  albukhr_security.financial_custody_accounts,
+  albukhr_security.financial_custody_evidence,
+  albukhr_security.financial_custody_balance_snapshots,
+  albukhr_security.financial_custody_review_events
+from public, anon, authenticated, service_role;
+
+revoke all on function albukhr_security.assert_mainnet_financial_custody_project() from public, anon, authenticated, service_role;
+revoke all on function albukhr_security.reject_financial_custody_record_mutation() from public, anon, authenticated, service_role;
+
+comment on table albukhr_security.financial_custody_accounts is
+  'Mainnet-only global custody account registry. Append-only versioned account declarations; not proof of balance or eligibility.';
+comment on table albukhr_security.financial_custody_evidence is
+  'Immutable evidence references and content digests for custody, control, segregation, liquidity and balance claims.';
+comment on table albukhr_security.financial_custody_balance_snapshots is
+  'Immutable exact-numeric Pi custody balance snapshots partitioned into available, frozen, pledged, encumbered and unclassified amounts. Not eligible until independently verified.';
+comment on table albukhr_security.financial_custody_review_events is
+  'Append-only Mainnet custody review and verification event history. Role codes are reserved for controlled RPC authorization.';
+
+commit;
