@@ -5,6 +5,7 @@
 "use strict";
 
 const { supabase, SUPABASE_URL } = require("./supabase-client");
+const { readMainnetFinancialReadiness } = require("./mainnet-financial-readiness");
 
 const MAINNET_URL = "https://ribpntyqdleytsyktdfb.supabase.co";
 const HORIZON = "https://api.mainnet.minepi.com";
@@ -222,12 +223,8 @@ async function checkTableGroup(tableNames) {
 }
 
 async function settlementRpcStatus() {
-  // Do not execute a financial mutation from a health check.
-  return {
-    name: SETTLEMENT_RPC_NAME,
-    present: true,
-    execute_role: "service_role",
-  };
+  // Read-only metadata projection. This never executes a financial mutation.
+  return readMainnetFinancialReadiness(supabase);
 }
 
 async function databaseStatus() {
@@ -256,8 +253,17 @@ async function databaseStatus() {
 
   const coreReady = Object.values(coreResult.tables).every(Boolean);
   const liquidityTablesReady = Object.values(liquidityResult.tables).every(Boolean);
-  const financialSettlementReady = liquidityTablesReady && settlement.present;
+  const financialSettlementReady = liquidityTablesReady && settlement.ready === true;
   const databaseErrors = [...coreResult.errors, ...liquidityResult.errors];
+
+  if (!settlement.ready) {
+    databaseErrors.push({
+      table: "mainnet_financial_readiness",
+      code: settlement.code || "FINANCIAL_READINESS_NOT_READY",
+      status: null,
+      message: settlement.message || "Required Mainnet financial schema, RPC, grant or RLS checks are not ready.",
+    });
+  }
 
   const restProbeErrors = restProbes
     .filter((probe) => !probe.ok)
@@ -276,7 +282,13 @@ async function databaseStatus() {
     login_events: "protected_not_directly_probed",
   };
 
-  const status = databaseErrors.length > 0 || !coreReady ? "degraded" : "ok";
+  const status =
+    databaseErrors.length > 0 ||
+    !coreReady ||
+    !liquidityTablesReady ||
+    settlement.ready !== true
+      ? "degraded"
+      : "ok";
 
   return {
     status,
@@ -285,7 +297,7 @@ async function databaseStatus() {
     core_tables: coreTables,
     liquidity_tables: liquidityResult.tables,
     financial_settlement_ready: financialSettlementReady,
-    settlement_rpc_present: settlement.present,
+    settlement_rpc_present: settlement.settlementRpcPresent === true,
     diagnostics: {
       database_query_errors: databaseErrors,
       core_database_ready: coreReady,
@@ -298,9 +310,13 @@ async function databaseStatus() {
         },
       },
       settlement_rpc: {
-        name: settlement.name,
-        present: settlement.present,
-        execute_role: settlement.execute_role,
+        name: SETTLEMENT_RPC_NAME,
+        present: settlement.settlementRpcPresent === true,
+        execute_role: "service_role",
+        readiness_rpc: settlement.name,
+        readiness_present: settlement.present === true,
+        readiness_ready: settlement.ready === true,
+        readiness_diagnostics: settlement.diagnostics || null,
       },
       runtime_rest_probe: restProbes,
       runtime_rest_probe_errors: restProbeErrors,
