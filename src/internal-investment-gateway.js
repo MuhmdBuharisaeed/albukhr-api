@@ -5,6 +5,7 @@
 
 const express = require("express");
 const { supabase } = require("./supabase-client");
+const { resolvePublishedTerm } = require("./published-term-projection");
 const {
   getPayment,
   approvePayment,
@@ -128,28 +129,24 @@ async function getInternalTreasury(projectId) {
 }
 
 async function requirePublishedInternalTerm({ project, durationDays, termVersionId }) {
-  const { data, error } = await supabase
-    .from("project_staking_term_versions")
-    .select("id,project_id,project_code,network,duration_days,term_status,version_number,effective_from,effective_until")
-    .eq("id", termVersionId)
-    .eq("project_id", project.id)
-    .eq("project_code", project.project_code)
-    .eq("network", MAINNET)
-    .eq("duration_days", durationDays)
-    .eq("term_status", "published")
-    .maybeSingle();
+  const { data, error } = await supabase.rpc("get_public_internal_staking_terms_v2", {
+    p_project_id: project.id,
+    p_network: MAINNET,
+  });
 
   if (error) throw httpError(502, "Published Internal investment term lookup failed.");
-  if (!data) throw httpError(403, "The accepted term version is not published for this Internal Project and duration.");
 
-  const now = Date.now();
-  const effectiveFrom = Date.parse(data.effective_from || "");
-  const effectiveUntil = data.effective_until ? Date.parse(data.effective_until) : null;
-  if (!Number.isFinite(effectiveFrom) || effectiveFrom > now ||
-      (effectiveUntil !== null && (!Number.isFinite(effectiveUntil) || effectiveUntil <= now))) {
-    throw httpError(403, "The accepted Internal investment term version is not currently effective.");
+  const term = resolvePublishedTerm(data, {
+    project,
+    durationDays,
+    termVersionId,
+    expectedProjectType: "internal",
+  });
+
+  if (!term) {
+    throw httpError(403, "The accepted term version is not published and effective for this Mainnet Internal Project and duration.");
   }
-  return data;
+  return term;
 }
 
 function verifyInternalPayment(payment, expected) {
