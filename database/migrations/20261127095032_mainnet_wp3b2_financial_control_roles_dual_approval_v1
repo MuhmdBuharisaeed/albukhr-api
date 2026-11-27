@@ -1,0 +1,700 @@
+BEGIN;
+
+CREATE TABLE albukhr_security.financial_control_role_catalog (
+  role_code text PRIMARY KEY,
+  display_name text NOT NULL,
+  description text NOT NULL,
+  scope_mode text NOT NULL DEFAULT 'global_or_project',
+  enabled boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT financial_control_role_catalog_code_ck
+    CHECK (role_code IN ('finance_treasury','risk_compliance','governance','custody_signer')),
+  CONSTRAINT financial_control_role_catalog_scope_ck
+    CHECK (scope_mode IN ('global_only','project_only','global_or_project')),
+  CONSTRAINT financial_control_role_catalog_name_ck
+    CHECK (length(btrim(display_name)) BETWEEN 2 AND 100),
+  CONSTRAINT financial_control_role_catalog_description_ck
+    CHECK (length(btrim(description)) BETWEEN 10 AND 1000)
+);
+
+INSERT INTO albukhr_security.financial_control_role_catalog
+  (role_code,display_name,description,scope_mode)
+VALUES
+  ('finance_treasury','Finance & Treasury','Verifies custody evidence, reconciles balances, reviews Treasury controls and proposes approved financial operations. Cannot approve its own submissions.','global_or_project'),
+  ('risk_compliance','Risk & Compliance','Reviews risk classification, reserve eligibility, stress exposure, control exceptions and risk clearances. Cannot initiate or execute custody movements.','global_or_project'),
+  ('governance','Governance','Approves controlled policy decisions, financial exceptions and restricted-state reopening after independent verification. Cannot alter historical evidence.','global_or_project'),
+  ('custody_signer','Custody Signer','Executes custody movements only under approved dual-control instructions. Cannot create and approve the same entitlement or transaction.','global_or_project');
+
+CREATE TABLE albukhr_security.financial_control_role_change_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  network text NOT NULL DEFAULT 'mainnet',
+  request_type text NOT NULL,
+  role_code text NOT NULL REFERENCES albukhr_security.financial_control_role_catalog(role_code) ON DELETE RESTRICT,
+  target_user_id uuid NOT NULL REFERENCES albukhr_security.admin_users(user_id) ON DELETE RESTRICT,
+  scope_type text NOT NULL,
+  project_id uuid REFERENCES public.projects(id) ON DELETE RESTRICT,
+  target_grant_id uuid,
+  reason text NOT NULL,
+  requested_by uuid NOT NULL REFERENCES albukhr_security.admin_users(user_id) ON DELETE RESTRICT,
+  requested_at timestamptz NOT NULL DEFAULT now(),
+  status text NOT NULL DEFAULT 'pending_second_approval',
+  approved_by uuid REFERENCES albukhr_security.admin_users(user_id) ON DELETE RESTRICT,
+  approved_at timestamptz,
+  rejected_by uuid REFERENCES albukhr_security.admin_users(user_id) ON DELETE RESTRICT,
+  rejected_at timestamptz,
+  rejection_reason text,
+  CONSTRAINT financial_control_requests_network_ck CHECK (network = 'mainnet'),
+  CONSTRAINT financial_control_requests_type_ck CHECK (request_type IN ('grant','revoke')),
+  CONSTRAINT financial_control_requests_scope_ck CHECK (
+    (scope_type = 'global' AND project_id IS NULL) OR
+    (scope_type = 'project' AND project_id IS NOT NULL)
+  ),
+  CONSTRAINT financial_control_requests_status_ck CHECK (
+    status IN ('pending_second_approval','approved','rejected')
+  ),
+  CONSTRAINT financial_control_requests_reason_ck CHECK (length(btrim(reason)) BETWEEN 10 AND 2000),
+  CONSTRAINT financial_control_requests_revoke_target_ck CHECK (
+    (request_type = 'grant' AND target_grant_id IS NULL) OR
+    (request_type = 'revoke' AND target_grant_id IS NOT NULL)
+  ),
+  CONSTRAINT financial_control_requests_approval_ck CHECK (
+    (status <> 'approved' OR
+      (approved_by IS NOT NULL AND approved_at IS NOT NULL
+       AND approved_by <> requested_by AND approved_by <> target_user_id))
+  ),
+  CONSTRAINT financial_control_requests_rejection_ck CHECK (
+    (status <> 'rejected' OR
+      (rejected_by IS NOT NULL AND rejected_at IS NOT NULL
+       AND rejection_reason IS NOT NULL
+       AND rejected_by <> requested_by AND rejected_by <> target_user_id))
+  ),
+  CONSTRAINT financial_control_requests_no_double_resolution_ck CHECK (
+    NOT (approved_by IS NOT NULL AND rejected_by IS NOT NULL)
+  )
+);
+
+CREATE TABLE albukhr_security.financial_control_role_grants (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id uuid NOT NULL UNIQUE REFERENCES albukhr_security.financial_control_role_change_requests(id) ON DELETE RESTRICT,
+  network text NOT NULL DEFAULT 'mainnet',
+  role_code text NOT NULL REFERENCES albukhr_security.financial_control_role_catalog(role_code) ON DELETE RESTRICT,
+  target_user_id uuid NOT NULL REFERENCES albukhr_security.admin_users(user_id) ON DELETE RESTRICT,
+  scope_type text NOT NULL,
+  project_id uuid REFERENCES public.projects(id) ON DELETE RESTRICT,
+  requested_by uuid NOT NULL REFERENCES albukhr_security.admin_users(user_id) ON DELETE RESTRICT,
+  approved_by uuid NOT NULL REFERENCES albukhr_security.admin_users(user_id) ON DELETE RESTRICT,
+  granted_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT financial_control_grants_network_ck CHECK (network = 'mainnet'),
+  CONSTRAINT financial_control_grants_scope_ck CHECK (
+    (scope_type = 'global' AND project_id IS NULL) OR
+    (scope_type = 'project' AND project_id IS NOT NULL)
+  ),
+  CONSTRAINT financial_control_grants_separation_ck CHECK (
+    requested_by <> approved_by
+    AND target_user_id <> requested_by
+    AND target_user_id <> approved_by
+  ),
+  CONSTRAINT financial_control_grants_composite_uq
+    UNIQUE (id,target_user_id,role_code,scope_type,project_id)
+);
+
+CREATE TABLE albukhr_security.financial_control_role_revocations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id uuid NOT NULL UNIQUE REFERENCES albukhr_security.financial_control_role_change_requests(id) ON DELETE RESTRICT,
+  grant_id uuid NOT NULL UNIQUE REFERENCES albukhr_security.financial_control_role_grants(id) ON DELETE RESTRICT,
+  network text NOT NULL DEFAULT 'mainnet',
+  target_user_id uuid NOT NULL REFERENCES albukhr_security.admin_users(user_id) ON DELETE RESTRICT,
+  role_code text NOT NULL REFERENCES albukhr_security.financial_control_role_catalog(role_code) ON DELETE RESTRICT,
+  scope_type text NOT NULL,
+  project_id uuid REFERENCES public.projects(id) ON DELETE RESTRICT,
+  requested_by uuid NOT NULL REFERENCES albukhr_security.admin_users(user_id) ON DELETE RESTRICT,
+  approved_by uuid NOT NULL REFERENCES albukhr_security.admin_users(user_id) ON DELETE RESTRICT,
+  revoked_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT financial_control_revocations_network_ck CHECK (network = 'mainnet'),
+  CONSTRAINT financial_control_revocations_scope_ck CHECK (
+    (scope_type = 'global' AND project_id IS NULL) OR
+    (scope_type = 'project' AND project_id IS NOT NULL)
+  ),
+  CONSTRAINT financial_control_revocations_separation_ck CHECK (
+    requested_by <> approved_by
+    AND target_user_id <> requested_by
+    AND target_user_id <> approved_by
+  )
+);
+
+ALTER TABLE albukhr_security.financial_control_role_change_requests
+  ADD CONSTRAINT financial_control_requests_target_grant_fk
+  FOREIGN KEY (target_grant_id)
+  REFERENCES albukhr_security.financial_control_role_grants(id)
+  ON DELETE RESTRICT;
+
+CREATE TABLE albukhr_security.financial_control_role_change_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id uuid NOT NULL REFERENCES albukhr_security.financial_control_role_change_requests(id) ON DELETE RESTRICT,
+  event_type text NOT NULL,
+  actor_user_id uuid NOT NULL REFERENCES albukhr_security.admin_users(user_id) ON DELETE RESTRICT,
+  actor_role_code text NOT NULL DEFAULT 'super_admin',
+  reason text NOT NULL,
+  event_payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT financial_control_events_type_ck CHECK (
+    event_type IN ('request_created','request_approved','request_rejected')
+  ),
+  CONSTRAINT financial_control_events_actor_role_ck CHECK (actor_role_code = 'super_admin'),
+  CONSTRAINT financial_control_events_reason_ck CHECK (length(btrim(reason)) BETWEEN 3 AND 2000),
+  CONSTRAINT financial_control_events_payload_ck CHECK (jsonb_typeof(event_payload) = 'object')
+);
+
+CREATE INDEX financial_control_requests_pending_idx
+  ON albukhr_security.financial_control_role_change_requests(status,requested_at)
+  WHERE status = 'pending_second_approval';
+CREATE INDEX financial_control_requests_target_idx
+  ON albukhr_security.financial_control_role_change_requests(target_user_id,requested_at DESC);
+CREATE INDEX financial_control_grants_target_scope_idx
+  ON albukhr_security.financial_control_role_grants(target_user_id,scope_type,project_id,role_code);
+CREATE INDEX financial_control_revocations_grant_idx
+  ON albukhr_security.financial_control_role_revocations(grant_id);
+CREATE INDEX financial_control_events_request_idx
+  ON albukhr_security.financial_control_role_change_events(request_id,created_at);
+
+CREATE FUNCTION albukhr_security.reject_financial_control_immutable_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $function$
+BEGIN
+  RAISE EXCEPTION 'Financial control catalogue, grants, revocations and audit events are append-only.'
+    USING errcode = '55000';
+END;
+$function$;
+
+CREATE TRIGGER financial_control_role_catalog_append_only_trg
+  BEFORE UPDATE OR DELETE ON albukhr_security.financial_control_role_catalog
+  FOR EACH ROW EXECUTE FUNCTION albukhr_security.reject_financial_control_immutable_mutation();
+CREATE TRIGGER financial_control_role_grants_append_only_trg
+  BEFORE UPDATE OR DELETE ON albukhr_security.financial_control_role_grants
+  FOR EACH ROW EXECUTE FUNCTION albukhr_security.reject_financial_control_immutable_mutation();
+CREATE TRIGGER financial_control_role_revocations_append_only_trg
+  BEFORE UPDATE OR DELETE ON albukhr_security.financial_control_role_revocations
+  FOR EACH ROW EXECUTE FUNCTION albukhr_security.reject_financial_control_immutable_mutation();
+CREATE TRIGGER financial_control_role_events_append_only_trg
+  BEFORE UPDATE OR DELETE ON albukhr_security.financial_control_role_change_events
+  FOR EACH ROW EXECUTE FUNCTION albukhr_security.reject_financial_control_immutable_mutation();
+
+CREATE FUNCTION albukhr_security.assert_financial_control_super_admin()
+RETURNS uuid
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  v_actor uuid := auth.uid();
+BEGIN
+  IF v_actor IS NULL
+     OR coalesce(auth.jwt()->>'aal','') <> 'aal2'
+     OR NOT EXISTS (
+       SELECT 1
+       FROM albukhr_security.admin_users au
+       WHERE au.user_id = v_actor
+         AND au.status = 'active'
+         AND au.mfa_required = true
+     )
+     OR NOT albukhr_security.is_super_admin(v_actor)
+  THEN
+    RAISE EXCEPTION 'Active AAL2 Super Admin authorization is required.'
+      USING errcode = '42501';
+  END IF;
+  RETURN v_actor;
+END;
+$function$;
+
+CREATE FUNCTION albukhr_security.request_financial_control_role_change(
+  p_request_type text,
+  p_target_user_id uuid,
+  p_role_code text,
+  p_scope_type text,
+  p_project_id uuid,
+  p_target_grant_id uuid,
+  p_reason text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  v_actor uuid;
+  v_role albukhr_security.financial_control_role_catalog%rowtype;
+  v_grant albukhr_security.financial_control_role_grants%rowtype;
+  v_request_id uuid;
+BEGIN
+  v_actor := albukhr_security.assert_financial_control_super_admin();
+
+  IF p_request_type NOT IN ('grant','revoke') THEN
+    RAISE EXCEPTION 'Request type must be grant or revoke.' USING errcode = '22023';
+  END IF;
+  IF p_target_user_id IS NULL OR p_target_user_id = v_actor THEN
+    RAISE EXCEPTION 'The target admin must be a different user from the requester.' USING errcode = '22023';
+  END IF;
+  IF length(btrim(coalesce(p_reason,''))) < 10 OR length(btrim(p_reason)) > 2000 THEN
+    RAISE EXCEPTION 'A reason between 10 and 2,000 characters is required.' USING errcode = '22023';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM albukhr_security.admin_users au
+    WHERE au.user_id = p_target_user_id AND au.status = 'active'
+  ) THEN
+    RAISE EXCEPTION 'Target must be an active ALBUKHR Admin.' USING errcode = '22023';
+  END IF;
+
+  SELECT * INTO v_role
+  FROM albukhr_security.financial_control_role_catalog c
+  WHERE c.role_code = p_role_code AND c.enabled = true;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Financial control role is unknown or disabled.' USING errcode = '22023';
+  END IF;
+
+  IF p_scope_type NOT IN ('global','project')
+     OR (p_scope_type = 'global' AND p_project_id IS NOT NULL)
+     OR (p_scope_type = 'project' AND p_project_id IS NULL)
+  THEN
+    RAISE EXCEPTION 'Role scope must be global with no project, or project-scoped with a project ID.' USING errcode = '22023';
+  END IF;
+  IF p_scope_type = 'project' AND NOT EXISTS (
+    SELECT 1 FROM public.projects p
+    WHERE p.id = p_project_id
+      AND lower(btrim(p.network)) = 'mainnet'
+      AND lower(btrim(p.status)) IN ('approved','active')
+  ) THEN
+    RAISE EXCEPTION 'Project scope must reference an approved or active Mainnet project.' USING errcode = '22023';
+  END IF;
+
+  IF p_request_type = 'grant' THEN
+    IF p_target_grant_id IS NOT NULL THEN
+      RAISE EXCEPTION 'Grant requests cannot include an existing grant ID.' USING errcode = '22023';
+    END IF;
+
+    IF EXISTS (
+      SELECT 1
+      FROM albukhr_security.financial_control_role_grants g
+      WHERE g.target_user_id = p_target_user_id
+        AND (
+          p_scope_type = 'global'
+          OR g.scope_type = 'global'
+          OR (g.scope_type = 'project' AND p_scope_type = 'project' AND g.project_id = p_project_id)
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM albukhr_security.financial_control_role_revocations r
+          WHERE r.grant_id = g.id
+        )
+    ) THEN
+      RAISE EXCEPTION 'Target already holds a conflicting financial control role in this scope.' USING errcode = '23505';
+    END IF;
+
+  ELSE
+    IF p_target_grant_id IS NULL THEN
+      RAISE EXCEPTION 'A revoke request must identify the exact active role grant.' USING errcode = '22023';
+    END IF;
+
+    SELECT * INTO v_grant
+    FROM albukhr_security.financial_control_role_grants g
+    WHERE g.id = p_target_grant_id
+      AND g.target_user_id = p_target_user_id
+      AND g.role_code = p_role_code
+      AND g.scope_type = p_scope_type
+      AND g.project_id IS NOT DISTINCT FROM p_project_id;
+
+    IF NOT FOUND OR EXISTS (
+      SELECT 1 FROM albukhr_security.financial_control_role_revocations r
+      WHERE r.grant_id = p_target_grant_id
+    ) THEN
+      RAISE EXCEPTION 'The referenced financial control grant is not active or does not match the target and scope.' USING errcode = '22023';
+    END IF;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM albukhr_security.financial_control_role_change_requests q
+    WHERE q.status = 'pending_second_approval'
+      AND q.target_user_id = p_target_user_id
+      AND q.role_code = p_role_code
+      AND q.scope_type = p_scope_type
+      AND q.project_id IS NOT DISTINCT FROM p_project_id
+  ) THEN
+    RAISE EXCEPTION 'A pending change request already exists for this target role and scope.' USING errcode = '23505';
+  END IF;
+
+  INSERT INTO albukhr_security.financial_control_role_change_requests (
+    request_type,role_code,target_user_id,scope_type,project_id,target_grant_id,
+    reason,requested_by
+  ) VALUES (
+    p_request_type,p_role_code,p_target_user_id,p_scope_type,p_project_id,p_target_grant_id,
+    btrim(p_reason),v_actor
+  )
+  RETURNING id INTO v_request_id;
+
+  INSERT INTO albukhr_security.financial_control_role_change_events (
+    request_id,event_type,actor_user_id,reason,event_payload
+  ) VALUES (
+    v_request_id,'request_created',v_actor,btrim(p_reason),
+    jsonb_build_object(
+      'request_type',p_request_type,
+      'role_code',p_role_code,
+      'target_user_id',p_target_user_id,
+      'scope_type',p_scope_type,
+      'project_id',p_project_id,
+      'target_grant_id',p_target_grant_id,
+      'network','mainnet'
+    )
+  );
+
+  RETURN jsonb_build_object(
+    'success',true,
+    'request_id',v_request_id,
+    'status','pending_second_approval',
+    'request_type',p_request_type,
+    'role_code',p_role_code,
+    'target_user_id',p_target_user_id,
+    'scope_type',p_scope_type,
+    'project_id',p_project_id,
+    'requires_distinct_super_admin_approval',true
+  );
+END;
+$function$;
+
+CREATE FUNCTION albukhr_security.approve_financial_control_role_change(p_request_id uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  v_actor uuid;
+  v_request albukhr_security.financial_control_role_change_requests%rowtype;
+  v_grant albukhr_security.financial_control_role_grants%rowtype;
+  v_grant_id uuid;
+  v_revocation_id uuid;
+BEGIN
+  v_actor := albukhr_security.assert_financial_control_super_admin();
+
+  SELECT * INTO v_request
+  FROM albukhr_security.financial_control_role_change_requests q
+  WHERE q.id = p_request_id AND q.network = 'mainnet'
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Financial control role request was not found on Mainnet.' USING errcode = 'P0002';
+  END IF;
+  IF v_request.status <> 'pending_second_approval' THEN
+    RAISE EXCEPTION 'Only pending requests can be approved.' USING errcode = '55000';
+  END IF;
+  IF v_actor = v_request.requested_by OR v_actor = v_request.target_user_id THEN
+    RAISE EXCEPTION 'The requester and the target admin cannot approve this request.' USING errcode = '42501';
+  END IF;
+
+  PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('financial-control-role:' || v_request.target_user_id::text,0)
+  );
+
+  IF NOT EXISTS (
+    SELECT 1 FROM albukhr_security.admin_users au
+    WHERE au.user_id = v_request.target_user_id AND au.status = 'active'
+  ) THEN
+    RAISE EXCEPTION 'Target admin is no longer active.' USING errcode = '55000';
+  END IF;
+
+  IF v_request.scope_type = 'project' AND NOT EXISTS (
+    SELECT 1 FROM public.projects p
+    WHERE p.id = v_request.project_id
+      AND lower(btrim(p.network)) = 'mainnet'
+      AND lower(btrim(p.status)) IN ('approved','active')
+  ) THEN
+    RAISE EXCEPTION 'Project scope is no longer eligible on Mainnet.' USING errcode = '55000';
+  END IF;
+
+  IF v_request.request_type = 'grant' THEN
+    IF EXISTS (
+      SELECT 1
+      FROM albukhr_security.financial_control_role_grants g
+      WHERE g.target_user_id = v_request.target_user_id
+        AND (
+          v_request.scope_type = 'global'
+          OR g.scope_type = 'global'
+          OR (g.scope_type = 'project' AND v_request.scope_type = 'project' AND g.project_id = v_request.project_id)
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM albukhr_security.financial_control_role_revocations r
+          WHERE r.grant_id = g.id
+        )
+    ) THEN
+      RAISE EXCEPTION 'Target acquired a conflicting financial control role while this request was pending.' USING errcode = '23505';
+    END IF;
+
+    INSERT INTO albukhr_security.financial_control_role_grants (
+      request_id,network,role_code,target_user_id,scope_type,project_id,requested_by,approved_by
+    ) VALUES (
+      v_request.id,'mainnet',v_request.role_code,v_request.target_user_id,
+      v_request.scope_type,v_request.project_id,v_request.requested_by,v_actor
+    )
+    RETURNING id INTO v_grant_id;
+
+  ELSE
+    SELECT * INTO v_grant
+    FROM albukhr_security.financial_control_role_grants g
+    WHERE g.id = v_request.target_grant_id
+      AND g.target_user_id = v_request.target_user_id
+      AND g.role_code = v_request.role_code
+      AND g.scope_type = v_request.scope_type
+      AND g.project_id IS NOT DISTINCT FROM v_request.project_id
+    FOR UPDATE;
+
+    IF NOT FOUND OR EXISTS (
+      SELECT 1 FROM albukhr_security.financial_control_role_revocations r
+      WHERE r.grant_id = v_request.target_grant_id
+    ) THEN
+      RAISE EXCEPTION 'The role grant was already revoked or no longer matches the request.' USING errcode = '55000';
+    END IF;
+
+    INSERT INTO albukhr_security.financial_control_role_revocations (
+      request_id,grant_id,network,target_user_id,role_code,scope_type,project_id,requested_by,approved_by
+    ) VALUES (
+      v_request.id,v_grant.id,'mainnet',v_request.target_user_id,v_request.role_code,
+      v_request.scope_type,v_request.project_id,v_request.requested_by,v_actor
+    )
+    RETURNING id INTO v_revocation_id;
+  END IF;
+
+  UPDATE albukhr_security.financial_control_role_change_requests
+  SET status = 'approved',approved_by = v_actor,approved_at = now()
+  WHERE id = v_request.id;
+
+  INSERT INTO albukhr_security.financial_control_role_change_events (
+    request_id,event_type,actor_user_id,reason,event_payload
+  ) VALUES (
+    v_request.id,'request_approved',v_actor,'Approved by a second independent AAL2 Super Admin.',
+    jsonb_build_object(
+      'request_type',v_request.request_type,
+      'role_code',v_request.role_code,
+      'target_user_id',v_request.target_user_id,
+      'grant_id',v_grant_id,
+      'revocation_id',v_revocation_id,
+      'network','mainnet'
+    )
+  );
+
+  RETURN jsonb_build_object(
+    'success',true,
+    'request_id',v_request.id,
+    'status','approved',
+    'request_type',v_request.request_type,
+    'grant_id',v_grant_id,
+    'revocation_id',v_revocation_id,
+    'requested_by',v_request.requested_by,
+    'approved_by',v_actor
+  );
+END;
+$function$;
+
+CREATE FUNCTION albukhr_security.reject_financial_control_role_change(
+  p_request_id uuid,
+  p_rejection_reason text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  v_actor uuid;
+  v_request albukhr_security.financial_control_role_change_requests%rowtype;
+BEGIN
+  v_actor := albukhr_security.assert_financial_control_super_admin();
+
+  IF length(btrim(coalesce(p_rejection_reason,''))) < 10
+     OR length(btrim(p_rejection_reason)) > 2000 THEN
+    RAISE EXCEPTION 'A rejection reason between 10 and 2,000 characters is required.' USING errcode = '22023';
+  END IF;
+
+  SELECT * INTO v_request
+  FROM albukhr_security.financial_control_role_change_requests q
+  WHERE q.id = p_request_id AND q.network = 'mainnet'
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Financial control role request was not found on Mainnet.' USING errcode = 'P0002';
+  END IF;
+  IF v_request.status <> 'pending_second_approval' THEN
+    RAISE EXCEPTION 'Only pending requests can be rejected.' USING errcode = '55000';
+  END IF;
+  IF v_actor = v_request.requested_by OR v_actor = v_request.target_user_id THEN
+    RAISE EXCEPTION 'The requester and target admin cannot reject this request.' USING errcode = '42501';
+  END IF;
+
+  UPDATE albukhr_security.financial_control_role_change_requests
+  SET status = 'rejected',
+      rejected_by = v_actor,
+      rejected_at = now(),
+      rejection_reason = btrim(p_rejection_reason)
+  WHERE id = v_request.id;
+
+  INSERT INTO albukhr_security.financial_control_role_change_events (
+    request_id,event_type,actor_user_id,reason,event_payload
+  ) VALUES (
+    v_request.id,'request_rejected',v_actor,btrim(p_rejection_reason),
+    jsonb_build_object(
+      'request_type',v_request.request_type,
+      'role_code',v_request.role_code,
+      'target_user_id',v_request.target_user_id,
+      'network','mainnet'
+    )
+  );
+
+  RETURN jsonb_build_object(
+    'success',true,
+    'request_id',v_request.id,
+    'status','rejected',
+    'rejected_by',v_actor
+  );
+END;
+$function$;
+
+CREATE FUNCTION albukhr_security.has_financial_control_role(
+  p_role_code text,
+  p_user_id uuid,
+  p_project_id uuid DEFAULT NULL
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+  SELECT EXISTS (
+    SELECT 1
+    FROM albukhr_security.financial_control_role_grants g
+    WHERE g.role_code = p_role_code
+      AND g.target_user_id = p_user_id
+      AND (g.scope_type = 'global' OR (p_project_id IS NOT NULL AND g.scope_type = 'project' AND g.project_id = p_project_id))
+      AND NOT EXISTS (
+        SELECT 1
+        FROM albukhr_security.financial_control_role_revocations r
+        WHERE r.grant_id = g.id
+      )
+  );
+$function$;
+
+CREATE FUNCTION albukhr_security.get_financial_control_role_workspace()
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  v_actor uuid;
+  v_catalog jsonb;
+  v_pending jsonb;
+  v_active_grants jsonb;
+  v_recent_events jsonb;
+BEGIN
+  v_actor := albukhr_security.assert_financial_control_super_admin();
+
+  SELECT coalesce(jsonb_agg(to_jsonb(c) ORDER BY c.role_code),'[]'::jsonb)
+  INTO v_catalog
+  FROM albukhr_security.financial_control_role_catalog c
+  WHERE c.enabled = true;
+
+  SELECT coalesce(jsonb_agg(
+    jsonb_build_object(
+      'request_id',q.id,'request_type',q.request_type,'role_code',q.role_code,
+      'target_user_id',q.target_user_id,'scope_type',q.scope_type,'project_id',q.project_id,
+      'reason',q.reason,'requested_by',q.requested_by,'requested_at',q.requested_at,
+      'status',q.status,'target_grant_id',q.target_grant_id
+    ) ORDER BY q.requested_at
+  ),'[]'::jsonb)
+  INTO v_pending
+  FROM albukhr_security.financial_control_role_change_requests q
+  WHERE q.network = 'mainnet' AND q.status = 'pending_second_approval';
+
+  SELECT coalesce(jsonb_agg(
+    jsonb_build_object(
+      'grant_id',g.id,'role_code',g.role_code,'target_user_id',g.target_user_id,
+      'scope_type',g.scope_type,'project_id',g.project_id,
+      'requested_by',g.requested_by,'approved_by',g.approved_by,'granted_at',g.granted_at
+    ) ORDER BY g.granted_at DESC
+  ),'[]'::jsonb)
+  INTO v_active_grants
+  FROM albukhr_security.financial_control_role_grants g
+  WHERE g.network = 'mainnet'
+    AND NOT EXISTS (
+      SELECT 1 FROM albukhr_security.financial_control_role_revocations r
+      WHERE r.grant_id = g.id
+    );
+
+  SELECT coalesce(jsonb_agg(
+    jsonb_build_object(
+      'event_id',e.id,'request_id',e.request_id,'event_type',e.event_type,
+      'actor_user_id',e.actor_user_id,'reason',e.reason,'event_payload',e.event_payload,
+      'created_at',e.created_at
+    ) ORDER BY e.created_at DESC
+  ),'[]'::jsonb)
+  INTO v_recent_events
+  FROM (
+    SELECT * FROM albukhr_security.financial_control_role_change_events
+    ORDER BY created_at DESC LIMIT 100
+  ) e;
+
+  RETURN jsonb_build_object(
+    'success',true,'network','mainnet','viewer_user_id',v_actor,
+    'catalog',v_catalog,'pending_requests',v_pending,
+    'active_assignments',v_active_grants,'recent_events',v_recent_events
+  );
+END;
+$function$;
+
+ALTER TABLE albukhr_security.financial_control_role_catalog ENABLE ROW LEVEL SECURITY;
+ALTER TABLE albukhr_security.financial_control_role_catalog FORCE ROW LEVEL SECURITY;
+ALTER TABLE albukhr_security.financial_control_role_change_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE albukhr_security.financial_control_role_change_requests FORCE ROW LEVEL SECURITY;
+ALTER TABLE albukhr_security.financial_control_role_grants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE albukhr_security.financial_control_role_grants FORCE ROW LEVEL SECURITY;
+ALTER TABLE albukhr_security.financial_control_role_revocations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE albukhr_security.financial_control_role_revocations FORCE ROW LEVEL SECURITY;
+ALTER TABLE albukhr_security.financial_control_role_change_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE albukhr_security.financial_control_role_change_events FORCE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE
+  albukhr_security.financial_control_role_catalog,
+  albukhr_security.financial_control_role_change_requests,
+  albukhr_security.financial_control_role_grants,
+  albukhr_security.financial_control_role_revocations,
+  albukhr_security.financial_control_role_change_events
+FROM PUBLIC, anon, authenticated, service_role;
+
+REVOKE ALL ON FUNCTION albukhr_security.reject_financial_control_immutable_mutation() FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION albukhr_security.assert_financial_control_super_admin() FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION albukhr_security.has_financial_control_role(text,uuid,uuid) FROM PUBLIC, anon, authenticated, service_role;
+
+REVOKE ALL ON FUNCTION albukhr_security.request_financial_control_role_change(text,uuid,text,text,uuid,uuid,text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION albukhr_security.approve_financial_control_role_change(uuid) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION albukhr_security.reject_financial_control_role_change(uuid,text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION albukhr_security.get_financial_control_role_workspace() FROM PUBLIC, anon, authenticated, service_role;
+
+GRANT USAGE ON SCHEMA albukhr_security TO authenticated;
+GRANT EXECUTE ON FUNCTION albukhr_security.request_financial_control_role_change(text,uuid,text,text,uuid,uuid,text) TO authenticated;
+GRANT EXECUTE ON FUNCTION albukhr_security.approve_financial_control_role_change(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION albukhr_security.reject_financial_control_role_change(uuid,text) TO authenticated;
+GRANT EXECUTE ON FUNCTION albukhr_security.get_financial_control_role_workspace() TO authenticated;
+
+COMMENT ON TABLE albukhr_security.financial_control_role_catalog IS
+  'Mainnet financial control role catalogue for Finance/Treasury, Risk/Compliance, Governance and Custody Signer. Separate from legacy admin_role enum.';
+COMMENT ON TABLE albukhr_security.financial_control_role_change_requests IS
+  'Controlled Mainnet financial role change workflow. Requester cannot be target or approver; all approvals require a distinct AAL2 Super Admin.';
+COMMENT ON TABLE albukhr_security.financial_control_role_grants IS
+  'Append-only financial control role grants created only by approved dual-control requests.';
+COMMENT ON TABLE albukhr_security.financial_control_role_revocations IS
+  'Append-only revocation events for financial control role grants; existing grant history is retained.';
+COMMENT ON TABLE albukhr_security.financial_control_role_change_events IS
+  'Append-only audit events for financial control role request, approval and rejection actions.';
+
+COMMIT;
