@@ -6,6 +6,12 @@
 const express = require("express");
 const { supabase } = require("./supabase-client");
 const { resolvePublishedTerm } = require("./published-term-projection");
+const { isSupportedStakingDuration } = require("./staking-duration-catalogue");
+const {
+  sessionFingerprint,
+  validateStakingPolicyAcceptance,
+  assertPaymentAcceptanceMetadata,
+} = require("./staking-policy-acceptance");
 const {
   getPayment,
   approvePayment,
@@ -44,7 +50,7 @@ function positiveAmount(value) {
 
 function duration(value) {
   const days = Number(value);
-  if (!Number.isInteger(days) || ![30, 60, 90, 180, 365, 430].includes(days)) {
+  if (!isSupportedStakingDuration(days)) {
     throw httpError(400, "duration is invalid.");
   }
   return days;
@@ -69,15 +75,16 @@ function requireBearer(req) {
 }
 
 async function verifiedPiIdentity(req) {
+  const token = requireBearer(req);
   let pioneer;
   try {
-    pioneer = await getPioneer(requireBearer(req));
+    pioneer = await getPioneer(token);
   } catch {
     throw httpError(401, "Pi identity could not be verified.");
   }
   const piUid = String(pioneer?.uid || "").trim();
   if (!piUid) throw httpError(401, "Pi identity could not be verified.");
-  return { pi_uid: piUid };
+  return { pi_uid: piUid, session_fingerprint: sessionFingerprint(token) };
 }
 
 async function getInternalProject(projectCode, { requireActive = false } = {}) {
@@ -169,8 +176,14 @@ router.post("/api/internal-payment-approve", async (req, res) => {
 
     const project = await getInternalProject(projectCode, { requireActive: true });
     await requirePublishedInternalTerm({ project, durationDays, termVersionId });
+    const acceptanceId = uuidValue(b.acceptance_id, "acceptance_id");
+    const acceptance = await validateStakingPolicyAcceptance({
+      supabase, acceptanceId, projectId: project.id, termVersionId,
+      piUid: identity.pi_uid, sessionFingerprint: identity.session_fingerprint,
+    });
     const treasury = await getInternalTreasury(project.id);
     const payment = await getPayment(paymentId);
+    assertPaymentAcceptanceMetadata(payment, acceptanceId, acceptance);
 
     const verified = verifyInternalPayment(payment, {
       paymentId,
@@ -218,6 +231,11 @@ router.post("/api/internal-payment-complete", async (req, res) => {
 
     const project = await getInternalProject(projectCode, { requireActive: true });
     await requirePublishedInternalTerm({ project, durationDays, termVersionId });
+    const acceptanceId = uuidValue(b.acceptance_id, "acceptance_id");
+    const acceptance = await validateStakingPolicyAcceptance({
+      supabase, acceptanceId, projectId: project.id, termVersionId,
+      piUid: identity.pi_uid, sessionFingerprint: identity.session_fingerprint,
+    });
     const treasury = await getInternalTreasury(project.id);
     const expected = {
       paymentId,
@@ -230,6 +248,7 @@ router.post("/api/internal-payment-complete", async (req, res) => {
     };
 
     const before = await getPayment(paymentId);
+    assertPaymentAcceptanceMetadata(before, acceptanceId, acceptance);
     const beforeVerified = verifyInternalPayment(before, {
       ...expected,
       requireRecipient: false
@@ -253,6 +272,7 @@ router.post("/api/internal-payment-complete", async (req, res) => {
     });
     const recipient = finalPayment.recipient;
     const transactionId = finalPayment.transactionId;
+    assertPaymentAcceptanceMetadata(completion, acceptanceId, acceptance);
 
     const { data, error } = await supabase.rpc("create_internal_stake_from_completed_payment", {
       p_project_id: project.id,
@@ -270,6 +290,11 @@ router.post("/api/internal-payment-complete", async (req, res) => {
         project_code: projectCode,
         duration_days: durationDays,
         term_version_id: termVersionId,
+        acceptance_id: acceptanceId,
+        term_hash: acceptance.term_hash,
+        policy_revision: acceptance.policy_revision,
+        policy_hash: acceptance.policy_hash,
+        accepted_at_utc: acceptance.accepted_at_utc,
         transaction_id: transactionId
       }
     });
